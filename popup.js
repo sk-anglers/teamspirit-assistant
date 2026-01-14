@@ -1,4 +1,5 @@
 const TEAMSPIRIT_URL = 'https://teamspirit-74532.lightning.force.com/lightning/page/home';
+const TEAMSPIRIT_ATTENDANCE_URL = 'https://teamspirit-74532.lightning.force.com/lightning/n/teamspirit__AtkWorkTimeTab';
 const LOGIN_URL = 'https://login.salesforce.com/';
 const MY_DOMAIN_LOGIN_URL = 'https://teamspirit-74532.my.salesforce.com/';
 
@@ -6,6 +7,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Elements
   const loginSection = document.getElementById('loginSection');
   const punchSection = document.getElementById('punchSection');
+  const timeSection = document.getElementById('timeSection');
   const loginBtn = document.getElementById('loginBtn');
   const emailInput = document.getElementById('email');
   const passwordInput = document.getElementById('password');
@@ -17,6 +19,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   const statusDiv = document.getElementById('status');
   const openTeamSpiritLink = document.getElementById('openTeamSpirit');
   const logoutLink = document.getElementById('logoutLink');
+  const currentTimeEl = document.getElementById('currentTime');
+  const clockInTimeEl = document.getElementById('clockInTime');
+  const workingTimeEl = document.getElementById('workingTime');
+
+  // Time update interval
+  let timeUpdateInterval = null;
 
   // Load saved data
   const stored = await chrome.storage.local.get(['savedLocation', 'credentials', 'isLoggedIn']);
@@ -159,26 +167,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       const tab = await findTeamSpiritTab();
       if (tab) {
-        chrome.tabs.sendMessage(tab.id, { action: 'getStatus' }, (response) => {
+        chrome.tabs.sendMessage(tab.id, { action: 'getStatus' }, async (response) => {
           if (chrome.runtime.lastError) {
             showStatus('ログイン済み', 'logged-in');
             updateButtonStates(null);
+            // Check stored working state for time display
+            const { clockInTimestamp } = await chrome.storage.local.get('clockInTimestamp');
+            await initializeTimeDisplay(!!clockInTimestamp);
             return;
           }
           if (response && response.status) {
             showStatus(response.status, response.isWorking ? 'working' : 'logged-in');
             updateButtonStates(response.isWorking);
+            // Initialize time display based on working status
+            await initializeTimeDisplay(response.isWorking);
           } else {
             updateButtonStates(null);
+            hideTimeSection();
           }
         });
       } else {
         showStatus('ログイン済み', 'logged-in');
         updateButtonStates(null);
+        // Check stored working state for time display
+        const { clockInTimestamp } = await chrome.storage.local.get('clockInTimestamp');
+        await initializeTimeDisplay(!!clockInTimestamp);
       }
     } catch (error) {
       showStatus('ログイン済み', 'logged-in');
       updateButtonStates(null);
+      hideTimeSection();
     }
   }
 
@@ -195,6 +213,297 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Unknown state - enable both
       clockInBtn.disabled = false;
       clockOutBtn.disabled = false;
+    }
+  }
+
+  // ==================== Time Management Functions (Separate from Status Detection) ====================
+
+  // Format time as HH:MM:SS
+  function formatTime(date) {
+    const h = String(date.getHours()).padStart(2, '0');
+    const m = String(date.getMinutes()).padStart(2, '0');
+    const s = String(date.getSeconds()).padStart(2, '0');
+    return `${h}:${m}:${s}`;
+  }
+
+  // Format time as HH:MM
+  function formatTimeShort(date) {
+    const h = String(date.getHours()).padStart(2, '0');
+    const m = String(date.getMinutes()).padStart(2, '0');
+    return `${h}:${m}`;
+  }
+
+  // Format duration as HH:MM:SS
+  function formatDuration(ms) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+
+  // Update time display
+  function updateTimeDisplay() {
+    // Update current time
+    currentTimeEl.textContent = formatTime(new Date());
+
+    // Update working time if clocked in
+    chrome.storage.local.get(['clockInTimestamp'], (result) => {
+      if (result.clockInTimestamp) {
+        const clockInDate = new Date(result.clockInTimestamp);
+        clockInTimeEl.textContent = formatTimeShort(clockInDate);
+
+        const workingMs = Date.now() - result.clockInTimestamp;
+        workingTimeEl.textContent = formatDuration(workingMs);
+      } else {
+        clockInTimeEl.textContent = '--:--';
+        workingTimeEl.textContent = '--:--:--';
+      }
+    });
+  }
+
+  // Start time update interval
+  function startTimeUpdates() {
+    if (timeUpdateInterval) {
+      clearInterval(timeUpdateInterval);
+    }
+    updateTimeDisplay();
+    timeUpdateInterval = setInterval(updateTimeDisplay, 1000);
+  }
+
+  // Stop time update interval
+  function stopTimeUpdates() {
+    if (timeUpdateInterval) {
+      clearInterval(timeUpdateInterval);
+      timeUpdateInterval = null;
+    }
+  }
+
+  // Show time section (only when working)
+  function showTimeSection() {
+    timeSection.classList.remove('hidden');
+    startTimeUpdates();
+  }
+
+  // Hide time section
+  function hideTimeSection() {
+    timeSection.classList.add('hidden');
+    stopTimeUpdates();
+  }
+
+  // Save clock-in timestamp (called when punching in via extension)
+  async function saveClockInTime() {
+    const now = Date.now();
+    await chrome.storage.local.set({ clockInTimestamp: now });
+  }
+
+  // Clear clock-in timestamp (called when punching out via extension)
+  async function clearClockInTime() {
+    await chrome.storage.local.remove('clockInTimestamp');
+  }
+
+  // Fetch clock-in time from TeamSpirit attendance table (separate from status detection)
+  async function fetchClockInTimeFromSite() {
+    let tempTab = null;
+    try {
+      console.log('Fetching clock-in time from TeamSpirit attendance page...');
+
+      // Open attendance page in background (NOT home page - to avoid interfering with status detection)
+      tempTab = await chrome.tabs.create({ url: TEAMSPIRIT_ATTENDANCE_URL, active: false });
+
+      // Wait for page to load
+      await waitForTabLoad(tempTab.id);
+
+      // Additional wait for dynamic content (Salesforce Lightning takes time)
+      await new Promise(r => setTimeout(r, 5000));
+
+      // Get today's date in YYYY-MM-DD format
+      const today = new Date();
+      const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+      // Execute script to find clock-in time (search in all frames including iframes)
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tempTab.id, allFrames: true },
+        func: (dateStr) => {
+          try {
+            // Collect debug info
+            const debugInfo = {
+              url: window.location.href,
+              title: document.title,
+              dateStr: dateStr,
+              searchedId: `ttvTimeSt${dateStr}`,
+              iframeCount: document.querySelectorAll('iframe').length,
+              foundIds: [],
+              pageInfo: ''
+            };
+
+            // Look for the element with ID ttvTimeSt{date} (start time)
+            const elementId = `ttvTimeSt${dateStr}`;
+            const element = document.getElementById(elementId);
+
+            if (element) {
+              const timeText = element.textContent?.trim();
+              if (timeText && timeText !== '' && timeText !== '--:--') {
+                return { success: true, time: timeText };
+              }
+            }
+
+            // Search for any element with ID containing date or time keywords
+            const searchPatterns = ['ttvTimeSt', 'ttvTimeEt', 'fixTime', 'TimeS', 'TimeE', dateStr];
+            searchPatterns.forEach(pattern => {
+              try {
+                const els = document.querySelectorAll(`[id*="${pattern}"]`);
+                els.forEach(el => {
+                  if (!debugInfo.foundIds.find(f => f.id === el.id)) {
+                    debugInfo.foundIds.push({ id: el.id, text: el.textContent?.trim()?.substring(0, 30) });
+                  }
+                });
+              } catch(e) {}
+            });
+
+            // Check for any element with time pattern (HH:MM)
+            const timePattern = /^\d{1,2}:\d{2}$/;
+            const allElements = document.querySelectorAll('td, th, div, span');
+            let timeElementsFound = 0;
+            for (const el of allElements) {
+              const text = el.textContent?.trim();
+              if (text && timePattern.test(text) && timeElementsFound < 5) {
+                const id = el.id || el.className?.substring(0, 30) || 'no-id';
+                debugInfo.foundIds.push({ id: `[time] ${id}`, text: text });
+                timeElementsFound++;
+              }
+            }
+
+            // Get page structure info
+            const h1 = document.querySelector('h1, h2, .title, [class*="title"]');
+            debugInfo.pageInfo = h1?.textContent?.trim()?.substring(0, 50) || 'no title found';
+
+            return { success: false, error: 'Element not found', debug: debugInfo };
+          } catch (e) {
+            return { success: false, error: e.message };
+          }
+        },
+        args: [dateStr]
+      });
+
+      // Close temp tab
+      try {
+        await chrome.tabs.remove(tempTab.id);
+      } catch (e) {}
+      tempTab = null;
+
+      // With allFrames: true, results is an array from each frame
+      // Find the successful result from any frame
+      if (results && results.length > 0) {
+        let successResult = null;
+        let debugInfo = null;
+
+        for (const frameResult of results) {
+          if (frameResult.result) {
+            if (frameResult.result.success) {
+              successResult = frameResult.result;
+              break;
+            } else if (frameResult.result.debug && frameResult.result.debug.foundIds?.length > 0) {
+              // Keep debug info from frame that found something
+              debugInfo = frameResult.result.debug;
+            } else if (!debugInfo && frameResult.result.debug) {
+              debugInfo = frameResult.result.debug;
+            }
+          }
+        }
+
+        if (successResult) {
+          const timeStr = successResult.time;
+          console.log('Fetched clock-in time from site:', timeStr);
+
+          // Parse time string (e.g., "09:00" or "9:00") and convert to timestamp
+          const timeParts = timeStr.split(':');
+          if (timeParts.length >= 2) {
+            const hours = parseInt(timeParts[0], 10);
+            const minutes = parseInt(timeParts[1], 10);
+
+            if (!isNaN(hours) && !isNaN(minutes)) {
+              const clockInDate = new Date();
+              clockInDate.setHours(hours, minutes, 0, 0);
+              const timestamp = clockInDate.getTime();
+
+              // Save to local storage for future use
+              await chrome.storage.local.set({ clockInTimestamp: timestamp });
+              console.log('Saved fetched clock-in time to local storage');
+
+              return timestamp;
+            }
+          }
+        } else {
+          // Log debug info for troubleshooting
+          console.log('Failed to find clock-in time. Debug info:', debugInfo);
+          if (debugInfo) {
+            await chrome.storage.local.set({ lastFetchDebug: debugInfo });
+          }
+        }
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error fetching clock-in time from site:', error);
+      // Clean up temp tab if still open
+      if (tempTab) {
+        try {
+          await chrome.tabs.remove(tempTab.id);
+        } catch (e) {}
+      }
+      return null;
+    }
+  }
+
+  // Check if timestamp is from today
+  function isToday(timestamp) {
+    const date = new Date(timestamp);
+    const today = new Date();
+    return date.getFullYear() === today.getFullYear() &&
+           date.getMonth() === today.getMonth() &&
+           date.getDate() === today.getDate();
+  }
+
+  // Check and initialize time display based on stored data
+  async function initializeTimeDisplay(isWorking) {
+    // First, clean up old timestamps from previous days
+    const { clockInTimestamp } = await chrome.storage.local.get('clockInTimestamp');
+    if (clockInTimestamp && !isToday(clockInTimestamp)) {
+      // Timestamp is from a previous day - clear it
+      await clearClockInTime();
+    }
+
+    if (isWorking) {
+      // Check if we have a stored clock-in time for today
+      const stored = await chrome.storage.local.get('clockInTimestamp');
+      if (!stored.clockInTimestamp) {
+        // Working but no stored time - fetch from TeamSpirit site
+        showTimeSection(); // Show section immediately with placeholder
+        showMessage('出勤時刻を取得中...', 'info');
+
+        // Fetch from site in background
+        const fetchedTimestamp = await fetchClockInTimeFromSite();
+        if (fetchedTimestamp) {
+          showMessage('', ''); // Clear message
+          updateTimeDisplay(); // Update with fetched time
+        } else {
+          // Show debug info
+          const { lastFetchDebug } = await chrome.storage.local.get('lastFetchDebug');
+          if (lastFetchDebug) {
+            const iframes = lastFetchDebug.iframeCount || 0;
+            const foundList = lastFetchDebug.foundIds?.slice(0, 5).map(f => `${f.id}:${f.text}`).join(' | ') || 'none';
+            console.log('Fetch debug:', lastFetchDebug);
+            showMessage(`iframe:${iframes} Found: ${foundList}`, 'error');
+          } else {
+            showMessage('出勤時刻の取得に失敗しました', 'error');
+          }
+        }
+      } else {
+        showTimeSection();
+      }
+    } else {
+      hideTimeSection();
     }
   }
 
@@ -400,13 +709,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         const actionText = action === 'clockIn' ? '出勤' : '退勤';
         showMessage(`${actionText}打刻が完了しました`, 'success');
 
-        // Update button states based on action
+        // Update button states and time management based on action
         if (action === 'clockIn') {
           showStatus('出勤中', 'working');
           updateButtonStates(true);
+          // Save clock-in timestamp locally
+          await saveClockInTime();
+          showTimeSection();
         } else {
           showStatus('未出勤', 'logged-in');
           updateButtonStates(false);
+          // Clear clock-in timestamp
+          await clearClockInTime();
+          hideTimeSection();
         }
 
         // Close auto-opened tab
