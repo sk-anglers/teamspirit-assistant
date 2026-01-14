@@ -21,8 +21,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   const logoutLink = document.getElementById('logoutLink');
   const currentTimeEl = document.getElementById('currentTime');
   const clockInTimeEl = document.getElementById('clockInTime');
+  const clockOutTimeEl = document.getElementById('clockOutTime');
+  const clockOutRow = document.getElementById('clockOutRow');
   const workingTimeEl = document.getElementById('workingTime');
   const targetClockOutEl = document.getElementById('targetClockOut');
+  const targetRow = document.getElementById('targetRow');
   const summarySection = document.getElementById('summarySection');
   const summaryToggle = document.getElementById('summaryToggle');
   const summaryContent = document.getElementById('summaryContent');
@@ -195,48 +198,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   async function checkPunchStatus(retryCount = 0) {
-    const maxRetries = 5;
-    const retryDelay = 1000;
+    // Show loading status while fetching accurate status from TeamSpirit site
+    showStatus('確認中...', '');
 
-    try {
-      const tab = await findTeamSpiritTab();
-      if (tab) {
-        chrome.tabs.sendMessage(tab.id, { action: 'getStatus' }, async (response) => {
-          if (chrome.runtime.lastError) {
-            showStatus('ログイン済み', 'logged-in');
-            updateButtonStates(null);
-            const { clockInTimestamp } = await chrome.storage.local.get('clockInTimestamp');
-            await initializeTimeDisplay(!!clockInTimestamp);
-            return;
-          }
-
-          // If punch area not found and we have retries left, wait and retry
-          if (response && response.status === '打刻エリアが見つかりません' && retryCount < maxRetries) {
-            showStatus('読み込み中...', '');
-            setTimeout(() => checkPunchStatus(retryCount + 1), retryDelay);
-            return;
-          }
-
-          if (response && response.status) {
-            showStatus(response.status, response.isWorking ? 'working' : 'logged-in');
-            updateButtonStates(response.isWorking);
-            await initializeTimeDisplay(response.isWorking);
-          } else {
-            updateButtonStates(null);
-            hideTimeSection();
-          }
-        });
-      } else {
-        showStatus('ログイン済み', 'logged-in');
-        updateButtonStates(null);
-        const { clockInTimestamp } = await chrome.storage.local.get('clockInTimestamp');
-        await initializeTimeDisplay(!!clockInTimestamp);
-      }
-    } catch (error) {
-      showStatus('ログイン済み', 'logged-in');
-      updateButtonStates(null);
-      hideTimeSection();
-    }
+    // Always fetch from TeamSpirit site to get accurate working status
+    // (based on whether clock-out time exists for today)
+    await initializeTimeDisplay(false);
   }
 
   function updateButtonStates(isWorking) {
@@ -391,9 +358,42 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // Show time section (only when working)
+  // Update time display for clocked-out state (final, fixed values)
+  function updateTimeDisplayFinal(clockInTs, clockOutTs) {
+    // Show current time (still updating)
+    currentTimeEl.textContent = formatTime(new Date());
+
+    // Show clock-in time
+    const clockInDate = new Date(clockInTs);
+    clockInTimeEl.textContent = formatTimeShort(clockInDate);
+
+    // Show clock-out time and row
+    const clockOutDate = new Date(clockOutTs);
+    clockOutTimeEl.textContent = formatTimeShort(clockOutDate);
+    clockOutRow.style.display = 'flex';
+
+    // Hide target row (not relevant when clocked out)
+    targetRow.style.display = 'none';
+
+    // Calculate and show final working time (clock-out - clock-in)
+    const workingMs = clockOutTs - clockInTs;
+    workingTimeEl.textContent = formatDuration(workingMs);
+
+    // Start interval just for current time
+    if (timeUpdateInterval) {
+      clearInterval(timeUpdateInterval);
+    }
+    timeUpdateInterval = setInterval(() => {
+      currentTimeEl.textContent = formatTime(new Date());
+    }, 1000);
+  }
+
+  // Show time section (for working state)
   function showTimeSection() {
     timeSection.classList.remove('hidden');
+    // Reset to working mode display
+    clockOutRow.style.display = 'none';
+    targetRow.style.display = 'flex';
     startTimeUpdates();
   }
 
@@ -401,6 +401,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   function hideTimeSection() {
     timeSection.classList.add('hidden');
     stopTimeUpdates();
+    // Reset rows
+    clockOutRow.style.display = 'none';
+    targetRow.style.display = 'flex';
   }
 
   // Save clock-in timestamp (called when punching in via extension)
@@ -433,7 +436,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const today = new Date();
       const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-      // Execute script to find clock-in time AND summary data (search in all frames including iframes)
+      // Execute script to find clock-in/out times AND summary data (search in all frames including iframes)
       const results = await chrome.scripting.executeScript({
         target: { tabId: tempTab.id, allFrames: true },
         func: (dateStr) => {
@@ -441,21 +444,55 @@ document.addEventListener('DOMContentLoaded', async () => {
             const result = {
               success: false,
               clockInTime: null,
+              clockOutTime: null,
+              isWorking: false,
               summary: null,
               debug: null
             };
 
             // 1. Look for clock-in time with ID ttvTimeSt{date}
-            const elementId = `ttvTimeSt${dateStr}`;
-            const element = document.getElementById(elementId);
+            const clockInId = `ttvTimeSt${dateStr}`;
+            const clockInEl = document.getElementById(clockInId);
 
-            if (element) {
-              const timeText = element.textContent?.trim();
+            if (clockInEl) {
+              const timeText = clockInEl.textContent?.trim();
               if (timeText && timeText !== '' && timeText !== '--:--') {
                 result.clockInTime = timeText;
                 result.success = true;
               }
             }
+
+            // 2. Look for clock-out time - no ID, use class "vet" (visit end)
+            // Find in the same row as clock-in, or search by class
+            if (clockInEl) {
+              // Try to find sibling with class "vet" in the same row
+              const row = clockInEl.closest('tr');
+              if (row) {
+                const clockOutEl = row.querySelector('td.vet, td.dval.vet');
+                if (clockOutEl) {
+                  const timeText = clockOutEl.textContent?.trim();
+                  if (timeText && timeText !== '' && timeText !== '--:--') {
+                    result.clockOutTime = timeText;
+                  }
+                }
+              }
+            }
+
+            // Fallback: search for any element with class "vet day_time0" for today
+            if (!result.clockOutTime) {
+              const vetElements = document.querySelectorAll('td.vet.day_time0, td.dval.vet');
+              for (const el of vetElements) {
+                const timeText = el.textContent?.trim();
+                if (timeText && timeText !== '' && timeText !== '--:--' && /^\d{1,2}:\d{2}$/.test(timeText)) {
+                  result.clockOutTime = timeText;
+                  break;
+                }
+              }
+            }
+
+            // 3. Determine if user is currently working
+            // Working = has clock-in time AND no clock-out time
+            result.isWorking = !!(result.clockInTime && !result.clockOutTime);
 
             // 2. Look for summary data by searching for text labels
             const summaryData = {};
@@ -603,13 +640,18 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
         }
 
-        let timestamp = null;
+        let clockInTimestamp = null;
+        let clockOutTimestamp = null;
+        let isWorking = false;
+        let hasClockedOut = false;
 
         if (bestResult?.clockInTime) {
           const timeStr = bestResult.clockInTime;
           console.log('Fetched clock-in time from site:', timeStr);
+          console.log('Fetched clock-out time from site:', bestResult.clockOutTime || 'none');
+          console.log('Is working:', bestResult.isWorking);
 
-          // Parse time string (e.g., "09:00" or "9:00") and convert to timestamp
+          // Parse clock-in time string
           const timeParts = timeStr.split(':');
           if (timeParts.length >= 2) {
             const hours = parseInt(timeParts[0], 10);
@@ -618,13 +660,35 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!isNaN(hours) && !isNaN(minutes)) {
               const clockInDate = new Date();
               clockInDate.setHours(hours, minutes, 0, 0);
-              timestamp = clockInDate.getTime();
-
-              // Save to local storage for future use
-              await chrome.storage.local.set({ clockInTimestamp: timestamp });
-              console.log('Saved fetched clock-in time to local storage');
+              clockInTimestamp = clockInDate.getTime();
             }
           }
+
+          // Parse clock-out time string if exists
+          if (bestResult.clockOutTime) {
+            const outParts = bestResult.clockOutTime.split(':');
+            if (outParts.length >= 2) {
+              const hours = parseInt(outParts[0], 10);
+              const minutes = parseInt(outParts[1], 10);
+
+              if (!isNaN(hours) && !isNaN(minutes)) {
+                const clockOutDate = new Date();
+                clockOutDate.setHours(hours, minutes, 0, 0);
+                clockOutTimestamp = clockOutDate.getTime();
+                hasClockedOut = true;
+              }
+            }
+          }
+
+          isWorking = bestResult.isWorking;
+
+          // Save to storage
+          await chrome.storage.local.set({
+            clockInTimestamp: clockInTimestamp,
+            clockOutTimestamp: clockOutTimestamp,
+            hasClockedOut: hasClockedOut
+          });
+          console.log('Saved time data to storage');
         }
 
         // Save summary data if found
@@ -633,8 +697,14 @@ document.addEventListener('DOMContentLoaded', async () => {
           await chrome.storage.local.set({ workSummary: bestResult.summary });
         }
 
-        if (timestamp || bestResult?.summary) {
-          return { timestamp, summary: bestResult?.summary };
+        if (clockInTimestamp || bestResult?.summary) {
+          return {
+            clockInTimestamp,
+            clockOutTimestamp,
+            summary: bestResult?.summary,
+            isWorking,
+            hasClockedOut
+          };
         }
 
         // Log debug info for troubleshooting
@@ -667,64 +737,80 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Check and initialize time display based on stored data
-  async function initializeTimeDisplay(isWorking) {
+  async function initializeTimeDisplay(isWorkingHint) {
     // First, clean up old timestamps from previous days
-    const { clockInTimestamp } = await chrome.storage.local.get('clockInTimestamp');
+    const { clockInTimestamp, workSummary } = await chrome.storage.local.get(['clockInTimestamp', 'workSummary']);
+
     if (clockInTimestamp && !isToday(clockInTimestamp)) {
       // Timestamp is from a previous day - clear it
       await clearClockInTime();
+      await chrome.storage.local.remove('workSummary');
     }
 
-    if (isWorking) {
-      // Check if we have a stored clock-in time for today
-      const stored = await chrome.storage.local.get('clockInTimestamp');
-      if (!stored.clockInTimestamp) {
-        // Working but no stored time - fetch from TeamSpirit site
-        showTimeSection(); // Show section immediately with placeholder
-        showMessage('出勤時刻を取得中...', 'info');
+    // Always fetch from TeamSpirit site to get accurate working status
+    // (based on whether clock-out time exists for today)
+    showMessage('勤怠情報を取得中...', 'info');
 
-        // Fetch from site in background (returns { timestamp, summary })
-        const fetchResult = await fetchClockInTimeFromSite();
-        if (fetchResult) {
-          showMessage('', ''); // Clear message
-          updateTimeDisplay(); // Update with fetched time
-          // Display summary if available
-          if (fetchResult.summary) {
-            displaySummary(fetchResult.summary);
-          }
-        } else {
-          // Show debug info
-          const { lastFetchDebug } = await chrome.storage.local.get('lastFetchDebug');
-          if (lastFetchDebug) {
-            const iframes = lastFetchDebug.iframeCount || 0;
-            const foundList = lastFetchDebug.foundIds?.slice(0, 5).map(f => `${f.id}:${f.text}`).join(' | ') || 'none';
-            console.log('Fetch debug:', lastFetchDebug);
-            showMessage(`iframe:${iframes} Found: ${foundList}`, 'error');
-          } else {
-            showMessage('出勤時刻の取得に失敗しました', 'error');
-          }
+    const fetchResult = await fetchClockInTimeFromSite();
+
+    if (fetchResult) {
+      showMessage('', ''); // Clear message
+
+      if (fetchResult.isWorking) {
+        // User is currently working (has clock-in, no clock-out)
+        showStatus('出勤中', 'working');
+        updateButtonStates(true);
+        showTimeSection();
+        updateTimeDisplay();
+        if (fetchResult.summary) {
+          displaySummary(fetchResult.summary);
+        }
+      } else if (fetchResult.hasClockedOut) {
+        // User has clocked out today - show final times
+        showStatus('退勤済み', 'logged-in');
+        updateButtonStates(false);
+        timeSection.classList.remove('hidden');
+        updateTimeDisplayFinal(fetchResult.clockInTimestamp, fetchResult.clockOutTimestamp);
+        if (fetchResult.summary) {
+          displaySummary(fetchResult.summary);
         }
       } else {
-        showTimeSection();
-        // Try to load cached summary data
-        const { workSummary } = await chrome.storage.local.get('workSummary');
-        if (workSummary) {
-          displaySummary(workSummary);
-        } else {
-          // No cached summary - fetch it in background
-          showMessage('サマリーを取得中...', 'info');
-          const fetchResult = await fetchClockInTimeFromSite();
-          if (fetchResult?.summary) {
-            displaySummary(fetchResult.summary);
-            showMessage('', '');
-          } else {
-            showMessage('', '');
-          }
-        }
+        // User hasn't clocked in today
+        showStatus('未出勤', 'logged-in');
+        updateButtonStates(false);
+        hideTimeSection();
+        hideSummarySection();
       }
     } else {
-      hideTimeSection();
-      hideSummarySection();
+      // Failed to fetch from site - fall back to cached data
+      const stored = await chrome.storage.local.get(['clockInTimestamp', 'clockOutTimestamp', 'hasClockedOut', 'workSummary']);
+      const hasCachedClockIn = stored.clockInTimestamp && isToday(stored.clockInTimestamp);
+
+      if (hasCachedClockIn) {
+        if (stored.hasClockedOut && stored.clockOutTimestamp) {
+          showStatus('退勤済み', 'logged-in');
+          updateButtonStates(false);
+          timeSection.classList.remove('hidden');
+          updateTimeDisplayFinal(stored.clockInTimestamp, stored.clockOutTimestamp);
+        } else {
+          showStatus('出勤中', 'working');
+          updateButtonStates(true);
+          showTimeSection();
+          updateTimeDisplay();
+        }
+        if (stored.workSummary) {
+          displaySummary(stored.workSummary);
+        }
+        showMessage('', '');
+      } else if (isWorkingHint) {
+        // Content script says working but no cached data
+        showTimeSection();
+        showMessage('出勤時刻の取得に失敗しました', 'error');
+      } else {
+        hideTimeSection();
+        hideSummarySection();
+        showMessage('', '');
+      }
     }
   }
 
@@ -1051,9 +1137,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else {
           showStatus('未出勤', 'logged-in');
           updateButtonStates(false);
-          // Clear clock-in timestamp
+          // Clear clock-in timestamp and work summary
           await clearClockInTime();
+          await chrome.storage.local.remove('workSummary');
           hideTimeSection();
+          hideSummarySection();
         }
 
         // Close auto-opened tab
@@ -1503,22 +1591,179 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  function sendPunchCommand(tabId, action, location) {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error('打刻処理がタイムアウトしました'));
-      }, 30000);
+  async function sendPunchCommand(tabId, action, location) {
+    try {
+      // Use chrome.scripting.executeScript with allFrames to find buttons in any frame (including iframes)
+      const results = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        func: (action, location) => {
+          const logs = [];
+          logs.push(`Frame: ${window === window.top ? 'main' : 'iframe'}`);
+          logs.push(`URL: ${window.location.href}`);
 
-      chrome.tabs.sendMessage(tabId, { action, location }, (response) => {
-        clearTimeout(timeout);
+          // Location mapping
+          const LOCATION_MAP = {
+            'remote': 'リモート',
+            'office': 'オフィス',
+            'direct-to-office': '直行→オフィス',
+            'office-to-direct': 'オフィス→直帰',
+            'direct': '直行直帰'
+          };
 
-        if (chrome.runtime.lastError) {
-          reject(new Error('TeamSpiritとの通信に失敗しました'));
-          return;
-        }
+          // Find button by ID first, then by text
+          function findPunchButton(text) {
+            // Method 1: Search by specific TeamSpirit button IDs
+            if (text === '出勤') {
+              const btn = document.getElementById('btnStInput');
+              if (btn) return btn;
+            }
+            if (text === '退勤') {
+              const btn = document.getElementById('btnEtInput');
+              if (btn) return btn;
+            }
 
-        resolve(response || { success: false, error: '応答がありません' });
+            // Method 2: Direct button search by value attribute
+            const buttons = document.querySelectorAll('button, input[type="button"], [role="button"]');
+            for (const btn of buttons) {
+              const btnText = btn.textContent?.trim() || btn.value?.trim() || '';
+              if (btnText === text) {
+                return btn;
+              }
+            }
+            return null;
+          }
+
+          // Select location
+          function selectLocation(loc) {
+            const locationText = LOCATION_MAP[loc];
+            if (!locationText) return;
+
+            const buttons = document.querySelectorAll('button, input[type="button"], [role="button"], label');
+            for (const btn of buttons) {
+              const text = btn.textContent?.trim() || btn.value?.trim() || '';
+              if (text === locationText) {
+                const isSelected = btn.classList.contains('selected') ||
+                                  btn.classList.contains('active') ||
+                                  btn.getAttribute('aria-pressed') === 'true';
+                if (!isSelected) {
+                  btn.click();
+                }
+                return;
+              }
+            }
+          }
+
+          // Simulate click with multiple methods
+          function simulateClick(element) {
+            logs.push(`Clicking: ${element.id || element.value}`);
+
+            // Focus first
+            element.focus();
+
+            // Try onclick directly if exists
+            if (element.onclick) {
+              try {
+                element.onclick();
+                logs.push('onclick() called');
+              } catch (e) {
+                logs.push(`onclick error: ${e.message}`);
+              }
+            }
+
+            // Create and dispatch mouse events
+            const rect = element.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+
+            const mouseDownEvent = new MouseEvent('mousedown', {
+              bubbles: true, cancelable: true, view: window,
+              clientX: centerX, clientY: centerY
+            });
+            element.dispatchEvent(mouseDownEvent);
+
+            const mouseUpEvent = new MouseEvent('mouseup', {
+              bubbles: true, cancelable: true, view: window,
+              clientX: centerX, clientY: centerY
+            });
+            element.dispatchEvent(mouseUpEvent);
+
+            const clickEvent = new MouseEvent('click', {
+              bubbles: true, cancelable: true, view: window,
+              clientX: centerX, clientY: centerY
+            });
+            element.dispatchEvent(clickEvent);
+
+            // Native click
+            element.click();
+
+            logs.push('Click events dispatched');
+          }
+
+          try {
+            const buttonText = action === 'clockIn' ? '出勤' : '退勤';
+            const button = findPunchButton(buttonText);
+
+            if (!button) {
+              // Button not found in this frame - not an error, just skip
+              return { success: false, notFound: true, logs: logs.join('\n') };
+            }
+
+            logs.push(`Button found: ${button.id}, disabled: ${button.disabled}`);
+
+            if (button.disabled) {
+              const errorMsg = action === 'clockIn' ? '既に出勤済みです' : '出勤していないため退勤できません';
+              return { success: false, error: errorMsg, logs: logs.join('\n') };
+            }
+
+            // Select location first (for clock in)
+            if (action === 'clockIn' && location) {
+              selectLocation(location);
+            }
+
+            // Click the button
+            simulateClick(button);
+
+            return { success: true, logs: logs.join('\n') };
+          } catch (e) {
+            logs.push(`Error: ${e.message}`);
+            return { success: false, error: e.message, logs: logs.join('\n') };
+          }
+        },
+        args: [action, location]
       });
-    });
+
+      // Find the best result from all frames
+      // Prioritize: success > error with button found > not found
+      let bestResult = null;
+      let allLogs = [];
+
+      for (const frameResult of results) {
+        if (frameResult.result) {
+          allLogs.push(frameResult.result.logs || '');
+
+          if (frameResult.result.success) {
+            // Found and clicked - this is what we want
+            bestResult = frameResult.result;
+            break;
+          } else if (!frameResult.result.notFound) {
+            // Button was found but there was an error (like disabled)
+            bestResult = frameResult.result;
+          }
+        }
+      }
+
+      if (bestResult) {
+        return bestResult;
+      }
+
+      // No frame found the button
+      return {
+        success: false,
+        error: '打刻ボタンが見つかりません。TeamSpiritページを開いてください。',
+        logs: allLogs.join('\n---\n')
+      };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
   }
 });
