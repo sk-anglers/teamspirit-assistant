@@ -92,7 +92,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     showLoginSection();
-    showMessage('ログアウトしました', 'info');
+    hideTimeSection();
+    hideSummarySection();
+    showStatus('ログアウトしました', 'logged-out');
+    showMessage('', '');
   });
 
   // Login button
