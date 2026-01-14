@@ -18,27 +18,27 @@
     const url = window.location.href;
     const title = document.title || '';
 
-    // Check for login page indicators
-    const isLoginPage =
+    // Check for login page indicators (URL-based first, more reliable)
+    const isLoginPageUrl =
         url.includes('login.salesforce.com') ||
-        url.includes('my.salesforce.com') ||
+        (url.includes('my.salesforce.com') && !url.includes('lightning')) ||
         url.includes('/login') ||
-        url.includes('secur/frontdoor') ||
-        title.includes('ログイン') ||
-        title.toLowerCase().includes('login') ||
-        document.querySelector('#username') ||
-        document.querySelector('input[name="username"]') ||
-        document.querySelector('#password') ||
-        document.querySelector('input[type="password"]');
+        url.includes('secur/frontdoor');
 
-    if (isLoginPage) {
+    // Only check form elements if URL suggests login page
+    const hasLoginForm = isLoginPageUrl && (
+        document.querySelector('#username') ||
+        document.querySelector('input[name="username"]')
+    );
+
+    if (isLoginPageUrl && hasLoginForm) {
       return 'login';
     }
 
-    // Check for TeamSpirit/Salesforce main page
-    if (url.includes('lightning.force.com') ||
-        url.includes('lightning/page') ||
-        (title.includes('Salesforce') && !title.includes('ログイン') && !title.toLowerCase().includes('login'))) {
+    // Check for TeamSpirit/Salesforce main page - be more permissive
+    if (url.includes('force.com') ||
+        url.includes('salesforce.com') ||
+        url.includes('lightning')) {
       return 'teamspirit';
     }
 
