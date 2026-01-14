@@ -23,6 +23,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const clockInTimeEl = document.getElementById('clockInTime');
   const workingTimeEl = document.getElementById('workingTime');
   const summarySection = document.getElementById('summarySection');
+  const summaryToggle = document.getElementById('summaryToggle');
+  const summaryContent = document.getElementById('summaryContent');
   const scheduledHoursEl = document.getElementById('scheduledHours');
   const totalHoursEl = document.getElementById('totalHours');
   const overUnderHoursEl = document.getElementById('overUnderHours');
@@ -33,7 +35,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let timeUpdateInterval = null;
 
   // Load saved data
-  const stored = await chrome.storage.local.get(['savedLocation', 'credentials', 'isLoggedIn']);
+  const stored = await chrome.storage.local.get(['savedLocation', 'credentials', 'isLoggedIn', 'summaryCollapsed']);
 
   if (stored.savedLocation) {
     locationSelect.value = stored.savedLocation;
@@ -43,6 +45,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     emailInput.value = stored.credentials.email || '';
     passwordInput.value = stored.credentials.password || '';
   }
+
+  // Load summary collapsed state (default: collapsed)
+  if (stored.summaryCollapsed !== false) {
+    summaryToggle.classList.add('collapsed');
+    summaryContent.classList.add('collapsed');
+  }
+
+  // Summary toggle event
+  summaryToggle.addEventListener('click', () => {
+    const isCollapsed = summaryToggle.classList.toggle('collapsed');
+    summaryContent.classList.toggle('collapsed');
+    chrome.storage.local.set({ summaryCollapsed: isCollapsed });
+  });
 
   // Save location preference when changed
   locationSelect.addEventListener('change', () => {

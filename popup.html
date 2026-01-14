@@ -35,7 +35,11 @@
     <!-- Work Summary Section -->
     <div id="summarySection" class="section hidden">
       <div class="summary-display">
-        <div class="summary-header">月間サマリー</div>
+        <div class="summary-header" id="summaryToggle">
+          <span>月間サマリー</span>
+          <span class="toggle-icon">▼</span>
+        </div>
+        <div class="summary-content" id="summaryContent">
         <div class="summary-row">
           <span class="summary-label">所定労働時間</span>
           <span class="summary-value" id="scheduledHours">--:--</span>
@@ -56,6 +60,7 @@
         <div class="summary-row highlight">
           <span class="summary-label">一日当たり必要</span>
           <span class="summary-value" id="requiredPerDay">--:--</span>
+        </div>
         </div>
       </div>
     </div>

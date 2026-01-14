@@ -317,9 +317,38 @@ h1 {
   font-size: 12px;
   font-weight: bold;
   color: #0070d2;
-  margin-bottom: 8px;
-  padding-bottom: 6px;
+  padding: 8px 0;
   border-bottom: 1px solid #0070d2;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+}
+
+.summary-header:hover {
+  color: #005fb2;
+}
+
+.toggle-icon {
+  font-size: 10px;
+  transition: transform 0.2s;
+}
+
+.summary-header.collapsed .toggle-icon {
+  transform: rotate(-90deg);
+}
+
+.summary-content {
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+  max-height: 500px;
+  padding-top: 8px;
+}
+
+.summary-content.collapsed {
+  max-height: 0;
+  padding-top: 0;
 }
 
 .summary-row {
