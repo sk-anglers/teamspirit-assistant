@@ -284,23 +284,34 @@
   }
 
   async function performClockOut(location) {
+    const logs = [];
     try {
+      logs.push(`URL: ${window.location.href}`);
+      logs.push(`Frame: ${window === window.top ? 'main' : 'iframe'}`);
+
       const clockOutBtn = findPunchButtonByText('退勤');
       if (!clockOutBtn) {
-        throw new Error('退勤ボタンが見つかりません');
+        logs.push('退勤ボタン: 見つかりません');
+        throw new Error('退勤ボタンが見つかりません\n' + logs.join('\n'));
       }
 
+      logs.push(`退勤ボタン: ID=${clockOutBtn.id}, disabled=${clockOutBtn.disabled}`);
+      logs.push(`onclick属性: ${clockOutBtn.getAttribute('onclick') || 'なし'}`);
+      logs.push(`onclick関数: ${clockOutBtn.onclick ? 'あり' : 'なし'}`);
+
       if (clockOutBtn.disabled) {
-        throw new Error('出勤していないため退勤できません');
+        throw new Error('出勤していないため退勤できません\n' + logs.join('\n'));
       }
 
       // More robust click simulation
-      simulateClick(clockOutBtn);
+      const clickResult = simulateClick(clockOutBtn);
+      logs.push(`クリック実行完了`);
+
       await wait(1000);
 
-      return { success: true };
+      return { success: true, logs: logs.join('\n') };
     } catch (error) {
-      return { success: false, error: error.message };
+      return { success: false, error: error.message, logs: logs.join('\n') };
     }
   }
 

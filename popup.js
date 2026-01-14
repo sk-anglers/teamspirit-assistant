@@ -1038,7 +1038,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (result.success) {
         const actionText = action === 'clockIn' ? '出勤' : '退勤';
-        showMessage(`${actionText}打刻が完了しました`, 'success');
+        const logInfo = result.logs ? `\n${result.logs}` : '';
+        showMessage(`${actionText}打刻が完了しました${logInfo}`, 'success');
 
         // Update button states and time management based on action
         if (action === 'clockIn') {
