@@ -43,10 +43,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       const tab = await findTeamSpiritTab();
       if (tab) {
         statusDiv.querySelector('.status-text').textContent = 'TeamSpiritに接続中';
-        // Send message to content script to get status
         chrome.tabs.sendMessage(tab.id, { action: 'getStatus' }, (response) => {
           if (chrome.runtime.lastError) {
-            showStatus('TeamSpiritタブを再読み込みしてください', 'not-working');
+            showStatus('準備完了', 'not-working');
             return;
           }
           if (response && response.status) {
@@ -54,10 +53,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
         });
       } else {
-        showStatus('TeamSpiritを開いてください', 'not-working');
+        showStatus('準備完了', 'not-working');
       }
     } catch (error) {
-      showStatus('状態を取得できません', 'not-working');
+      showStatus('準備完了', 'not-working');
     }
   }
 
@@ -68,32 +67,71 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function performPunch(action, location) {
     const btn = action === 'clockIn' ? clockInBtn : clockOutBtn;
+    let autoOpenedTab = null;
 
     try {
       btn.disabled = true;
+      clockInBtn.disabled = true;
+      clockOutBtn.disabled = true;
       btn.classList.add('loading');
       showMessage('処理中...', 'info');
 
-      const tab = await findTeamSpiritTab();
+      let tab = await findTeamSpiritTab();
 
       if (!tab) {
-        // Open TeamSpirit and wait for it to load
+        // Open TeamSpirit in background
         showMessage('TeamSpiritを開いています...', 'info');
-        const newTab = await chrome.tabs.create({ url: TEAMSPIRIT_URL, active: false });
+        autoOpenedTab = await chrome.tabs.create({ url: TEAMSPIRIT_URL, active: false });
 
-        // Wait for the tab to load
-        await waitForTabLoad(newTab.id);
+        // Wait for the tab to load completely
+        await waitForTabLoad(autoOpenedTab.id);
+        showMessage('ページ読み込み完了、打刻中...', 'info');
 
-        // Send punch command
-        await sendPunchCommand(newTab.id, action, location);
+        // Wait for content script to be ready
+        await waitForContentScript(autoOpenedTab.id);
+
+        tab = autoOpenedTab;
+      }
+
+      // Send punch command
+      const result = await sendPunchCommand(tab.id, action, location);
+
+      if (result.success) {
+        const actionText = action === 'clockIn' ? '出勤' : '退勤';
+        showMessage(`${actionText}打刻が完了しました`, 'success');
+
+        // Close the auto-opened tab after successful punch
+        if (autoOpenedTab) {
+          setTimeout(async () => {
+            try {
+              await chrome.tabs.remove(autoOpenedTab.id);
+            } catch (e) {
+              // Tab might already be closed
+            }
+          }, 1500);
+        }
+
+        checkStatus();
       } else {
-        // Send punch command to existing tab
-        await sendPunchCommand(tab.id, action, location);
+        throw new Error(result.error || '打刻に失敗しました');
       }
     } catch (error) {
       showMessage(error.message || 'エラーが発生しました', 'error');
+
+      // Close auto-opened tab on error too
+      if (autoOpenedTab) {
+        setTimeout(async () => {
+          try {
+            await chrome.tabs.remove(autoOpenedTab.id);
+          } catch (e) {
+            // Tab might already be closed
+          }
+        }, 2000);
+      }
     } finally {
       btn.disabled = false;
+      clockInBtn.disabled = false;
+      clockOutBtn.disabled = false;
       btn.classList.remove('loading');
     }
   }
@@ -107,14 +145,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error('タブの読み込みがタイムアウトしました'));
-      }, 30000);
+      }, 60000);
 
       const listener = (updatedTabId, changeInfo) => {
         if (updatedTabId === tabId && changeInfo.status === 'complete') {
           clearTimeout(timeout);
           chrome.tabs.onUpdated.removeListener(listener);
-          // Wait a bit more for the page to fully render
-          setTimeout(resolve, 3000);
+          // Wait for the page to fully render (TeamSpirit/Salesforce takes time)
+          setTimeout(resolve, 5000);
         }
       };
 
@@ -122,22 +160,44 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  function waitForContentScript(tabId, maxRetries = 10) {
+    return new Promise((resolve, reject) => {
+      let retries = 0;
+
+      const tryConnect = () => {
+        chrome.tabs.sendMessage(tabId, { action: 'ping' }, (response) => {
+          if (chrome.runtime.lastError || !response) {
+            retries++;
+            if (retries >= maxRetries) {
+              reject(new Error('Content scriptの読み込みに失敗しました'));
+              return;
+            }
+            setTimeout(tryConnect, 1000);
+          } else {
+            resolve();
+          }
+        });
+      };
+
+      tryConnect();
+    });
+  }
+
   function sendPunchCommand(tabId, action, location) {
     return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('打刻処理がタイムアウトしました'));
+      }, 30000);
+
       chrome.tabs.sendMessage(tabId, { action, location }, (response) => {
+        clearTimeout(timeout);
+
         if (chrome.runtime.lastError) {
-          reject(new Error('TeamSpiritとの通信に失敗しました。ページを再読み込みしてください。'));
+          reject(new Error('TeamSpiritとの通信に失敗しました'));
           return;
         }
 
-        if (response && response.success) {
-          const actionText = action === 'clockIn' ? '出勤' : '退勤';
-          showMessage(`${actionText}打刻が完了しました`, 'success');
-          checkStatus();
-          resolve();
-        } else {
-          reject(new Error(response?.error || '打刻に失敗しました'));
-        }
+        resolve(response || { success: false, error: '応答がありません' });
       });
     });
   }

@@ -15,7 +15,11 @@
 
   // Listen for messages from popup
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === 'getStatus') {
+    if (request.action === 'ping') {
+      // Respond to ping to confirm content script is ready
+      sendResponse({ ready: true });
+      return;
+    } else if (request.action === 'getStatus') {
       const status = getCurrentStatus();
       sendResponse(status);
     } else if (request.action === 'clockIn') {
