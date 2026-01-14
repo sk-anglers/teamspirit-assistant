@@ -453,6 +453,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     let injected = false;
 
     while (retries < maxRetries) {
+      // Check if tab URL is valid (not chrome://)
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        if (!tab.url || tab.url.startsWith('chrome://') || tab.url === 'about:blank') {
+          retries++;
+          await new Promise(r => setTimeout(r, 500));
+          continue;
+        }
+      } catch (e) {
+        retries++;
+        await new Promise(r => setTimeout(r, 500));
+        continue;
+      }
+
       try {
         const response = await new Promise((resolve) => {
           chrome.tabs.sendMessage(tabId, { action: 'ping' }, (resp) => {
@@ -474,12 +488,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Try to inject content script if not already tried
       if (!injected && retries >= 2) {
         try {
-          await chrome.scripting.executeScript({
-            target: { tabId },
-            files: ['content.js']
-          });
-          injected = true;
-          console.log('Content script injected manually');
+          const tab = await chrome.tabs.get(tabId);
+          if (tab.url && tab.url.startsWith('https://')) {
+            await chrome.scripting.executeScript({
+              target: { tabId },
+              files: ['content.js']
+            });
+            injected = true;
+            console.log('Content script injected manually');
+          }
         } catch (e) {
           console.log('Failed to inject content script:', e);
         }
@@ -556,6 +573,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Fallback: execute script directly
       console.log('Using direct script execution for login');
+
+      // Check if tab URL is valid
+      const tab = await chrome.tabs.get(tabId);
+      if (!tab.url || !tab.url.startsWith('https://')) {
+        return { success: false, error: 'ログインページのURLが無効です' };
+      }
+
       const results = await chrome.scripting.executeScript({
         target: { tabId },
         func: (email, password) => {
