@@ -107,7 +107,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // TeamSpirit is already open and logged in
         await chrome.storage.local.set({ isLoggedIn: true });
         showPunchSection();
-        showStatus('ログイン済み', 'logged-in');
+        checkPunchStatus();
         return;
       } else if (isLoginPage) {
         // On login page - need to login
@@ -162,17 +162,39 @@ document.addEventListener('DOMContentLoaded', async () => {
         chrome.tabs.sendMessage(tab.id, { action: 'getStatus' }, (response) => {
           if (chrome.runtime.lastError) {
             showStatus('ログイン済み', 'logged-in');
+            updateButtonStates(null);
             return;
           }
           if (response && response.status) {
             showStatus(response.status, response.isWorking ? 'working' : 'logged-in');
+            updateButtonStates(response.isWorking);
+          } else {
+            updateButtonStates(null);
           }
         });
       } else {
         showStatus('ログイン済み', 'logged-in');
+        updateButtonStates(null);
       }
     } catch (error) {
       showStatus('ログイン済み', 'logged-in');
+      updateButtonStates(null);
+    }
+  }
+
+  function updateButtonStates(isWorking) {
+    if (isWorking === true) {
+      // Currently working - disable clock in, enable clock out
+      clockInBtn.disabled = true;
+      clockOutBtn.disabled = false;
+    } else if (isWorking === false) {
+      // Not working - enable clock in, disable clock out
+      clockInBtn.disabled = false;
+      clockOutBtn.disabled = true;
+    } else {
+      // Unknown state - enable both
+      clockInBtn.disabled = false;
+      clockOutBtn.disabled = false;
     }
   }
 
@@ -378,6 +400,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         const actionText = action === 'clockIn' ? '出勤' : '退勤';
         showMessage(`${actionText}打刻が完了しました`, 'success');
 
+        // Update button states based on action
+        if (action === 'clockIn') {
+          showStatus('出勤中', 'working');
+          updateButtonStates(true);
+        } else {
+          showStatus('未出勤', 'logged-in');
+          updateButtonStates(false);
+        }
+
         // Close auto-opened tab
         if (autoOpenedTab) {
           setTimeout(async () => {
@@ -386,8 +417,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             } catch (e) {}
           }, 1500);
         }
-
-        checkPunchStatus();
       } else {
         throw new Error(result.error || '打刻に失敗しました');
       }
@@ -407,10 +436,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           } catch (e) {}
         }, 2000);
       }
-    } finally {
-      btn.disabled = false;
+
+      // Re-enable buttons on error
       clockInBtn.disabled = false;
       clockOutBtn.disabled = false;
+    } finally {
       btn.classList.remove('loading');
     }
   }
