@@ -572,22 +572,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function sendLoginCommand(tabId, email, password) {
     try {
-      // First try content script message
-      const response = await new Promise((resolve) => {
-        chrome.tabs.sendMessage(tabId, { action: 'login', email, password }, (resp) => {
-          if (chrome.runtime.lastError) {
-            resolve(null);
-          } else {
-            resolve(resp);
-          }
-        });
-      });
-
-      if (response && response.success !== undefined) {
-        return response;
-      }
-
-      // Fallback: execute script directly
+      // Always use direct script execution for login (more reliable than content script)
       console.log('Using direct script execution for login');
 
       // Check if tab URL is valid
