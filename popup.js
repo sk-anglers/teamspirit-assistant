@@ -612,6 +612,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         const { workSummary } = await chrome.storage.local.get('workSummary');
         if (workSummary) {
           displaySummary(workSummary);
+        } else {
+          // No cached summary - fetch it in background
+          showMessage('サマリーを取得中...', 'info');
+          const fetchResult = await fetchClockInTimeFromSite();
+          if (fetchResult?.summary) {
+            displaySummary(fetchResult.summary);
+            showMessage('', '');
+          } else {
+            showMessage('', '');
+          }
         }
       }
     } else {
