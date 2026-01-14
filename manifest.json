@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TeamSpirit Quick Punch",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "TeamSpiritの打刻をワンクリックで行える拡張機能（ログイン機能付き）",
   "permissions": [
     "activeTab",

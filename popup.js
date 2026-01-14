@@ -463,9 +463,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             // 2. Look for clock-out time - no ID, use class "vet" (visit end)
-            // Find in the same row as clock-in, or search by class
+            // ONLY search in the same row as clock-in to avoid getting wrong day's data
             if (clockInEl) {
-              // Try to find sibling with class "vet" in the same row
               const row = clockInEl.closest('tr');
               if (row) {
                 const clockOutEl = row.querySelector('td.vet, td.dval.vet');
@@ -474,18 +473,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                   if (timeText && timeText !== '' && timeText !== '--:--') {
                     result.clockOutTime = timeText;
                   }
-                }
-              }
-            }
-
-            // Fallback: search for any element with class "vet day_time0" for today
-            if (!result.clockOutTime) {
-              const vetElements = document.querySelectorAll('td.vet.day_time0, td.dval.vet');
-              for (const el of vetElements) {
-                const timeText = el.textContent?.trim();
-                if (timeText && timeText !== '' && timeText !== '--:--' && /^\d{1,2}:\d{2}$/.test(timeText)) {
-                  result.clockOutTime = timeText;
-                  break;
                 }
               }
             }
@@ -739,16 +726,38 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Check and initialize time display based on stored data
   async function initializeTimeDisplay(isWorkingHint) {
     // First, clean up old timestamps from previous days
-    const { clockInTimestamp, workSummary } = await chrome.storage.local.get(['clockInTimestamp', 'workSummary']);
+    const stored = await chrome.storage.local.get(['clockInTimestamp', 'clockOutTimestamp', 'hasClockedOut', 'workSummary']);
 
-    if (clockInTimestamp && !isToday(clockInTimestamp)) {
+    if (stored.clockInTimestamp && !isToday(stored.clockInTimestamp)) {
       // Timestamp is from a previous day - clear it
       await clearClockInTime();
-      await chrome.storage.local.remove('workSummary');
+      await chrome.storage.local.remove(['workSummary', 'clockOutTimestamp', 'hasClockedOut']);
     }
 
-    // Always fetch from TeamSpirit site to get accurate working status
-    // (based on whether clock-out time exists for today)
+    // Check if we have valid cached data for today
+    const hasCachedClockIn = stored.clockInTimestamp && isToday(stored.clockInTimestamp);
+
+    if (hasCachedClockIn) {
+      // Use cached data
+      if (stored.hasClockedOut && stored.clockOutTimestamp) {
+        showStatus('退勤済み', 'logged-in');
+        updateButtonStates(false);
+        timeSection.classList.remove('hidden');
+        updateTimeDisplayFinal(stored.clockInTimestamp, stored.clockOutTimestamp);
+      } else {
+        showStatus('出勤中', 'working');
+        updateButtonStates(true);
+        showTimeSection();
+        updateTimeDisplay();
+      }
+      if (stored.workSummary) {
+        displaySummary(stored.workSummary);
+      }
+      showMessage('', '');
+      return;
+    }
+
+    // No cached data - fetch from TeamSpirit site
     showMessage('勤怠情報を取得中...', 'info');
 
     const fetchResult = await fetchClockInTimeFromSite();
@@ -782,31 +791,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         hideSummarySection();
       }
     } else {
-      // Failed to fetch from site - fall back to cached data
-      const stored = await chrome.storage.local.get(['clockInTimestamp', 'clockOutTimestamp', 'hasClockedOut', 'workSummary']);
-      const hasCachedClockIn = stored.clockInTimestamp && isToday(stored.clockInTimestamp);
-
-      if (hasCachedClockIn) {
-        if (stored.hasClockedOut && stored.clockOutTimestamp) {
-          showStatus('退勤済み', 'logged-in');
-          updateButtonStates(false);
-          timeSection.classList.remove('hidden');
-          updateTimeDisplayFinal(stored.clockInTimestamp, stored.clockOutTimestamp);
-        } else {
-          showStatus('出勤中', 'working');
-          updateButtonStates(true);
-          showTimeSection();
-          updateTimeDisplay();
-        }
-        if (stored.workSummary) {
-          displaySummary(stored.workSummary);
-        }
-        showMessage('', '');
-      } else if (isWorkingHint) {
-        // Content script says working but no cached data
+      // Failed to fetch from site
+      if (isWorkingHint) {
         showTimeSection();
         showMessage('出勤時刻の取得に失敗しました', 'error');
       } else {
+        showStatus('未出勤', 'logged-in');
+        updateButtonStates(false);
         hideTimeSection();
         hideSummarySection();
         showMessage('', '');
