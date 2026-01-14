@@ -16,10 +16,23 @@
   // Detect current page type
   function getPageType() {
     const url = window.location.href;
+    const title = document.title || '';
 
-    if (url.includes('login.salesforce.com') || url.includes('/login')) {
+    // Check for login page indicators
+    if (url.includes('login.salesforce.com') ||
+        url.includes('/login') ||
+        url.includes('secur/frontdoor') ||
+        title.toLowerCase().includes('login') ||
+        document.querySelector('#username') ||
+        document.querySelector('input[name="username"]') ||
+        document.querySelector('#password')) {
       return 'login';
-    } else if (url.includes('lightning.force.com')) {
+    }
+
+    // Check for TeamSpirit/Salesforce main page
+    if (url.includes('lightning.force.com') ||
+        url.includes('lightning/page') ||
+        (title.includes('Salesforce') && !title.toLowerCase().includes('login'))) {
       return 'teamspirit';
     }
 
@@ -30,8 +43,10 @@
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const pageType = getPageType();
 
+    console.log('Content script received:', request.action, 'pageType:', pageType, 'url:', window.location.href);
+
     if (request.action === 'ping') {
-      sendResponse({ ready: true, pageType });
+      sendResponse({ ready: true, pageType, url: window.location.href });
       return;
     }
 
@@ -39,7 +54,9 @@
       sendResponse({
         isLoginPage: pageType === 'login',
         isTeamSpiritPage: pageType === 'teamspirit',
-        url: window.location.href
+        pageType: pageType,
+        url: window.location.href,
+        title: document.title
       });
       return;
     }
@@ -51,10 +68,7 @@
     }
 
     if (request.action === 'login') {
-      if (pageType !== 'login') {
-        sendResponse({ success: false, error: 'ログインページではありません' });
-        return;
-      }
+      // Allow login attempt regardless of detected page type
       performLogin(request.email, request.password).then(result => {
         sendResponse(result);
       }).catch(error => {
@@ -94,24 +108,59 @@
 
   async function performLogin(email, password) {
     try {
-      // Find username/email field
+      console.log('Attempting login on page:', window.location.href);
+
+      // Find username/email field - try multiple selectors
       const usernameField = document.getElementById('username') ||
                            document.querySelector('input[name="username"]') ||
+                           document.querySelector('input[name="email"]') ||
                            document.querySelector('input[type="email"]') ||
-                           document.querySelector('input[autocomplete="username"]');
+                           document.querySelector('input[autocomplete="username"]') ||
+                           document.querySelector('input[autocomplete="email"]') ||
+                           document.querySelector('input.username') ||
+                           document.querySelector('[placeholder*="ユーザ"]') ||
+                           document.querySelector('[placeholder*="メール"]') ||
+                           document.querySelector('[placeholder*="email" i]') ||
+                           document.querySelector('[placeholder*="username" i]');
 
       // Find password field
       const passwordField = document.getElementById('password') ||
                            document.querySelector('input[name="pw"]') ||
-                           document.querySelector('input[type="password"]');
+                           document.querySelector('input[name="password"]') ||
+                           document.querySelector('input[type="password"]') ||
+                           document.querySelector('input.password') ||
+                           document.querySelector('[autocomplete="current-password"]');
 
-      // Find login button
+      // Find login button - try multiple selectors
       const loginButton = document.getElementById('Login') ||
                          document.querySelector('input[name="Login"]') ||
                          document.querySelector('input[type="submit"]') ||
-                         document.querySelector('button[type="submit"]');
+                         document.querySelector('button[type="submit"]') ||
+                         document.querySelector('button[name="Login"]') ||
+                         document.querySelector('#login-button') ||
+                         document.querySelector('.login-button') ||
+                         document.querySelector('button.slds-button') ||
+                         document.querySelector('[value="ログイン"]') ||
+                         document.querySelector('[value="Log In"]') ||
+                         findButtonByText('ログイン') ||
+                         findButtonByText('Log In') ||
+                         findButtonByText('Login');
+
+      console.log('Found elements:', {
+        username: !!usernameField,
+        password: !!passwordField,
+        loginButton: !!loginButton
+      });
 
       if (!usernameField) {
+        // List available inputs for debugging
+        const inputs = document.querySelectorAll('input');
+        console.log('Available inputs:', Array.from(inputs).map(i => ({
+          id: i.id,
+          name: i.name,
+          type: i.type,
+          placeholder: i.placeholder
+        })));
         throw new Error('メールアドレス入力欄が見つかりません');
       }
 
@@ -120,27 +169,68 @@
       }
 
       if (!loginButton) {
+        // List available buttons for debugging
+        const buttons = document.querySelectorAll('button, input[type="submit"]');
+        console.log('Available buttons:', Array.from(buttons).map(b => ({
+          id: b.id,
+          name: b.name,
+          type: b.type,
+          value: b.value,
+          text: b.textContent
+        })));
         throw new Error('ログインボタンが見つかりません');
       }
 
-      // Fill in credentials
+      // Clear and fill username field
+      usernameField.focus();
+      usernameField.value = '';
       usernameField.value = email;
       usernameField.dispatchEvent(new Event('input', { bubbles: true }));
+      usernameField.dispatchEvent(new Event('change', { bubbles: true }));
 
-      await wait(200);
+      await wait(300);
 
+      // Clear and fill password field
+      passwordField.focus();
+      passwordField.value = '';
       passwordField.value = password;
       passwordField.dispatchEvent(new Event('input', { bubbles: true }));
+      passwordField.dispatchEvent(new Event('change', { bubbles: true }));
 
-      await wait(200);
+      await wait(300);
 
       // Click login button
+      console.log('Clicking login button');
+      loginButton.focus();
       loginButton.click();
+
+      // Also try submitting the form if button click doesn't work
+      const form = usernameField.closest('form') || passwordField.closest('form');
+      if (form) {
+        await wait(500);
+        // Check if we're still on the same page
+        if (document.querySelector('#username') || document.querySelector('input[type="password"]')) {
+          console.log('Submitting form directly');
+          form.submit();
+        }
+      }
 
       return { success: true };
     } catch (error) {
+      console.error('Login error:', error);
       return { success: false, error: error.message };
     }
+  }
+
+  function findButtonByText(text) {
+    const buttons = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
+    for (const btn of buttons) {
+      const btnText = btn.textContent?.trim() || btn.value?.trim() || '';
+      if (btnText.toLowerCase() === text.toLowerCase()) {
+        return btn;
+      }
+    }
+    return null;
   }
 
   // ==================== TeamSpirit Functions ====================
@@ -152,8 +242,8 @@
         return { status: '打刻エリアが見つかりません', isWorking: false };
       }
 
-      const clockOutBtn = findButtonByText('退勤');
-      const clockInBtn = findButtonByText('出勤');
+      const clockOutBtn = findPunchButtonByText('退勤');
+      const clockInBtn = findPunchButtonByText('出勤');
 
       if (clockOutBtn && !clockOutBtn.disabled) {
         return { status: '出勤中', isWorking: true };
@@ -174,7 +264,7 @@
       await wait(500);
 
       // Find and click the clock-in button
-      const clockInBtn = findButtonByText('出勤');
+      const clockInBtn = findPunchButtonByText('出勤');
       if (!clockInBtn) {
         throw new Error('出勤ボタンが見つかりません');
       }
@@ -194,7 +284,7 @@
 
   async function performClockOut(location) {
     try {
-      const clockOutBtn = findButtonByText('退勤');
+      const clockOutBtn = findPunchButtonByText('退勤');
       if (!clockOutBtn) {
         throw new Error('退勤ボタンが見つかりません');
       }
@@ -267,7 +357,7 @@
     return null;
   }
 
-  function findButtonByText(text) {
+  function findPunchButtonByText(text) {
     // Method 1: Direct button search
     const buttons = document.querySelectorAll('button, input[type="button"], [role="button"]');
 
@@ -306,5 +396,5 @@
   }
 
   // Log page type for debugging
-  console.log('TeamSpirit Quick Punch: Content script loaded on', getPageType(), 'page');
+  console.log('TeamSpirit Quick Punch: Content script loaded on', getPageType(), 'page, URL:', window.location.href);
 })();
