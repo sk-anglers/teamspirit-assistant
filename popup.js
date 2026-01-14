@@ -691,18 +691,23 @@ document.addEventListener('DOMContentLoaded', async () => {
       remainingDaysEl.textContent = '--日';
     }
 
-    // Calculate required hours per day
-    const overUnderMinutes = parseTimeToMinutes(summary.overUnderHours);
-    if (remainingDays !== null && remainingDays > 0 && overUnderMinutes !== null && overUnderMinutes < 0) {
-      // Need to work |overUnderMinutes| more over remainingDays
-      const requiredMinutesPerDay = Math.ceil(Math.abs(overUnderMinutes) / remainingDays);
-      requiredPerDayEl.textContent = formatMinutesToTime(requiredMinutesPerDay);
-      requiredPerDayEl.classList.remove('negative', 'positive');
-    } else if (overUnderMinutes !== null && overUnderMinutes >= 0) {
-      // Already met or exceeded hours
-      requiredPerDayEl.textContent = '達成済み';
-      requiredPerDayEl.classList.add('positive');
-      requiredPerDayEl.classList.remove('negative');
+    // Calculate required hours per day based on (所定労働時間 - 総労働時間) / 残り日数
+    const scheduledMinutes = parseTimeToMinutes(summary.scheduledHours);
+    const totalMinutes = parseTimeToMinutes(summary.totalHours);
+
+    if (scheduledMinutes !== null && totalMinutes !== null && remainingDays !== null && remainingDays > 0) {
+      const remainingMinutes = scheduledMinutes - totalMinutes;
+      if (remainingMinutes > 0) {
+        // Still need to work more hours
+        const requiredMinutesPerDay = Math.ceil(remainingMinutes / remainingDays);
+        requiredPerDayEl.textContent = formatMinutesToTime(requiredMinutesPerDay);
+        requiredPerDayEl.classList.remove('negative', 'positive');
+      } else {
+        // Already met or exceeded scheduled hours
+        requiredPerDayEl.textContent = '達成済み';
+        requiredPerDayEl.classList.add('positive');
+        requiredPerDayEl.classList.remove('negative');
+      }
     } else {
       requiredPerDayEl.textContent = '--:--';
       requiredPerDayEl.classList.remove('negative', 'positive');
