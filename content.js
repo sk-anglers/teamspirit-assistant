@@ -84,10 +84,7 @@
     }
 
     if (request.action === 'clockIn') {
-      if (pageType !== 'teamspirit') {
-        sendResponse({ success: false, error: 'TeamSpiritページではありません' });
-        return;
-      }
+      // Try to punch regardless of page type - will fail with specific error if buttons not found
       performClockIn(request.location).then(result => {
         sendResponse(result);
       }).catch(error => {
@@ -97,10 +94,7 @@
     }
 
     if (request.action === 'clockOut') {
-      if (pageType !== 'teamspirit') {
-        sendResponse({ success: false, error: 'TeamSpiritページではありません' });
-        return;
-      }
+      // Try to punch regardless of page type - will fail with specific error if buttons not found
       performClockOut(request.location).then(result => {
         sendResponse(result);
       }).catch(error => {
