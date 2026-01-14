@@ -304,3 +304,70 @@ h1 {
   color: #333;
   font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
 }
+
+/* Work Summary Display */
+.summary-display {
+  background: #fff;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.summary-header {
+  font-size: 12px;
+  font-weight: bold;
+  color: #0070d2;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #0070d2;
+}
+
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.summary-label {
+  font-size: 11px;
+  color: #666;
+}
+
+.summary-value {
+  font-size: 13px;
+  font-weight: bold;
+  color: #333;
+  font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+}
+
+.summary-divider {
+  height: 1px;
+  background: #eee;
+  margin: 6px 0;
+}
+
+.summary-row.highlight {
+  background: #e8f4ff;
+  margin: 4px -8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+.summary-row.highlight .summary-label {
+  color: #0070d2;
+  font-weight: bold;
+}
+
+.summary-row.highlight .summary-value {
+  color: #0070d2;
+  font-size: 14px;
+}
+
+.summary-value.negative {
+  color: #c23934;
+}
+
+.summary-value.positive {
+  color: #2e844a;
+}

@@ -22,6 +22,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   const currentTimeEl = document.getElementById('currentTime');
   const clockInTimeEl = document.getElementById('clockInTime');
   const workingTimeEl = document.getElementById('workingTime');
+  const summarySection = document.getElementById('summarySection');
+  const scheduledHoursEl = document.getElementById('scheduledHours');
+  const totalHoursEl = document.getElementById('totalHours');
+  const overUnderHoursEl = document.getElementById('overUnderHours');
+  const remainingDaysEl = document.getElementById('remainingDays');
+  const requiredPerDayEl = document.getElementById('requiredPerDay');
 
   // Time update interval
   let timeUpdateInterval = null;
@@ -329,64 +335,139 @@ document.addEventListener('DOMContentLoaded', async () => {
       const today = new Date();
       const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-      // Execute script to find clock-in time (search in all frames including iframes)
+      // Execute script to find clock-in time AND summary data (search in all frames including iframes)
       const results = await chrome.scripting.executeScript({
         target: { tabId: tempTab.id, allFrames: true },
         func: (dateStr) => {
           try {
-            // Collect debug info
-            const debugInfo = {
-              url: window.location.href,
-              title: document.title,
-              dateStr: dateStr,
-              searchedId: `ttvTimeSt${dateStr}`,
-              iframeCount: document.querySelectorAll('iframe').length,
-              foundIds: [],
-              pageInfo: ''
+            const result = {
+              success: false,
+              clockInTime: null,
+              summary: null,
+              debug: null
             };
 
-            // Look for the element with ID ttvTimeSt{date} (start time)
+            // 1. Look for clock-in time with ID ttvTimeSt{date}
             const elementId = `ttvTimeSt${dateStr}`;
             const element = document.getElementById(elementId);
 
             if (element) {
               const timeText = element.textContent?.trim();
               if (timeText && timeText !== '' && timeText !== '--:--') {
-                return { success: true, time: timeText };
+                result.clockInTime = timeText;
+                result.success = true;
               }
             }
 
-            // Search for any element with ID containing date or time keywords
-            const searchPatterns = ['ttvTimeSt', 'ttvTimeEt', 'fixTime', 'TimeS', 'TimeE', dateStr];
-            searchPatterns.forEach(pattern => {
-              try {
-                const els = document.querySelectorAll(`[id*="${pattern}"]`);
-                els.forEach(el => {
-                  if (!debugInfo.foundIds.find(f => f.id === el.id)) {
-                    debugInfo.foundIds.push({ id: el.id, text: el.textContent?.trim()?.substring(0, 30) });
+            // 2. Look for summary data by searching for text labels
+            const summaryData = {};
+
+            // Helper function to find value next to label
+            const findValueByLabel = (labelText) => {
+              const allElements = document.querySelectorAll('td, th, div, span');
+              for (const el of allElements) {
+                const text = el.textContent?.trim();
+                if (text === labelText) {
+                  // Look for next sibling or parent's next sibling
+                  let valueEl = el.nextElementSibling;
+                  if (!valueEl && el.parentElement) {
+                    valueEl = el.parentElement.nextElementSibling;
                   }
-                });
-              } catch(e) {}
+                  if (!valueEl && el.parentElement) {
+                    // Try finding in same row
+                    const row = el.closest('tr, .row, [class*="row"]');
+                    if (row) {
+                      const cells = row.querySelectorAll('td, div, span');
+                      for (let i = 0; i < cells.length; i++) {
+                        if (cells[i].textContent?.trim() === labelText && cells[i + 1]) {
+                          return cells[i + 1].textContent?.trim();
+                        }
+                      }
+                    }
+                  }
+                  if (valueEl) {
+                    return valueEl.textContent?.trim();
+                  }
+                }
+              }
+              return null;
+            };
+
+            // Search for summary values using text patterns
+            const searchTexts = [
+              { key: 'scheduledHours', labels: ['所定労働時間'] },
+              { key: 'totalHours', labels: ['総労働時間', '総労働時間（有休を含む）'] },
+              { key: 'overUnderHours', labels: ['過不足時間'] },
+              { key: 'scheduledDays', labels: ['所定出勤日数'] },
+              { key: 'actualDays', labels: ['実出勤日数'] }
+            ];
+
+            // Alternative: search all text nodes for patterns
+            const allText = document.body?.innerText || '';
+
+            // Pattern matching for time values like "152:00" or "-89:17"
+            const timeValuePattern = /-?\d{1,3}:\d{2}/g;
+
+            // Search for specific patterns in table structure
+            const tables = document.querySelectorAll('table');
+            tables.forEach(table => {
+              const rows = table.querySelectorAll('tr');
+              rows.forEach(row => {
+                const cells = row.querySelectorAll('td, th');
+                if (cells.length >= 2) {
+                  const label = cells[0].textContent?.trim();
+                  const value = cells[cells.length - 1].textContent?.trim();
+
+                  if (label?.includes('所定労働時間')) summaryData.scheduledHours = value;
+                  if (label?.includes('総労働時間') && !label?.includes('法定')) summaryData.totalHours = value;
+                  if (label?.includes('過不足時間')) summaryData.overUnderHours = value;
+                  if (label?.includes('所定出勤日数')) summaryData.scheduledDays = value;
+                  if (label?.includes('実出勤日数')) summaryData.actualDays = value;
+                }
+              });
             });
 
-            // Check for any element with time pattern (HH:MM)
-            const timePattern = /^\d{1,2}:\d{2}$/;
-            const allElements = document.querySelectorAll('td, th, div, span');
-            let timeElementsFound = 0;
-            for (const el of allElements) {
-              const text = el.textContent?.trim();
-              if (text && timePattern.test(text) && timeElementsFound < 5) {
-                const id = el.id || el.className?.substring(0, 30) || 'no-id';
-                debugInfo.foundIds.push({ id: `[time] ${id}`, text: text });
-                timeElementsFound++;
+            // Also try div-based layout
+            const divs = document.querySelectorAll('div');
+            divs.forEach(div => {
+              const text = div.textContent?.trim();
+              if (!text) return;
+
+              // Check for label:value patterns
+              if (text.includes('所定労働時間') && !summaryData.scheduledHours) {
+                const match = text.match(/所定労働時間[:\s]*(\d{1,3}:\d{2})/);
+                if (match) summaryData.scheduledHours = match[1];
               }
+              if (text.includes('総労働時間') && !text.includes('法定') && !summaryData.totalHours) {
+                const match = text.match(/総労働時間[^法]*?(\d{1,3}:\d{2})/);
+                if (match) summaryData.totalHours = match[1];
+              }
+              if (text.includes('過不足時間') && !summaryData.overUnderHours) {
+                const match = text.match(/過不足時間[:\s]*(-?\d{1,3}:\d{2})/);
+                if (match) summaryData.overUnderHours = match[1];
+              }
+              if (text.includes('所定出勤日数') && !summaryData.scheduledDays) {
+                const match = text.match(/所定出勤日数[:\s]*(\d+)/);
+                if (match) summaryData.scheduledDays = match[1];
+              }
+              if (text.includes('実出勤日数') && !summaryData.actualDays) {
+                const match = text.match(/実出勤日数[:\s]*(\d+)/);
+                if (match) summaryData.actualDays = match[1];
+              }
+            });
+
+            if (Object.keys(summaryData).length > 0) {
+              result.summary = summaryData;
             }
 
-            // Get page structure info
-            const h1 = document.querySelector('h1, h2, .title, [class*="title"]');
-            debugInfo.pageInfo = h1?.textContent?.trim()?.substring(0, 50) || 'no title found';
+            // Debug info
+            result.debug = {
+              url: window.location.href,
+              foundClockIn: !!result.clockInTime,
+              summaryKeys: Object.keys(summaryData)
+            };
 
-            return { success: false, error: 'Element not found', debug: debugInfo };
+            return result;
           } catch (e) {
             return { success: false, error: e.message };
           }
@@ -401,27 +482,33 @@ document.addEventListener('DOMContentLoaded', async () => {
       tempTab = null;
 
       // With allFrames: true, results is an array from each frame
-      // Find the successful result from any frame
+      // Find the best result from any frame
       if (results && results.length > 0) {
-        let successResult = null;
+        let bestResult = null;
         let debugInfo = null;
 
         for (const frameResult of results) {
           if (frameResult.result) {
-            if (frameResult.result.success) {
-              successResult = frameResult.result;
-              break;
-            } else if (frameResult.result.debug && frameResult.result.debug.foundIds?.length > 0) {
-              // Keep debug info from frame that found something
-              debugInfo = frameResult.result.debug;
-            } else if (!debugInfo && frameResult.result.debug) {
+            // Prefer result with clock-in time or summary data
+            if (frameResult.result.clockInTime || frameResult.result.summary) {
+              if (!bestResult || (frameResult.result.clockInTime && !bestResult.clockInTime)) {
+                bestResult = frameResult.result;
+              }
+              // Merge summary data if found in different frames
+              if (frameResult.result.summary && bestResult) {
+                bestResult.summary = { ...bestResult.summary, ...frameResult.result.summary };
+              }
+            }
+            if (frameResult.result.debug) {
               debugInfo = frameResult.result.debug;
             }
           }
         }
 
-        if (successResult) {
-          const timeStr = successResult.time;
+        let timestamp = null;
+
+        if (bestResult?.clockInTime) {
+          const timeStr = bestResult.clockInTime;
           console.log('Fetched clock-in time from site:', timeStr);
 
           // Parse time string (e.g., "09:00" or "9:00") and convert to timestamp
@@ -433,21 +520,29 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!isNaN(hours) && !isNaN(minutes)) {
               const clockInDate = new Date();
               clockInDate.setHours(hours, minutes, 0, 0);
-              const timestamp = clockInDate.getTime();
+              timestamp = clockInDate.getTime();
 
               // Save to local storage for future use
               await chrome.storage.local.set({ clockInTimestamp: timestamp });
               console.log('Saved fetched clock-in time to local storage');
-
-              return timestamp;
             }
           }
-        } else {
-          // Log debug info for troubleshooting
-          console.log('Failed to find clock-in time. Debug info:', debugInfo);
-          if (debugInfo) {
-            await chrome.storage.local.set({ lastFetchDebug: debugInfo });
-          }
+        }
+
+        // Save summary data if found
+        if (bestResult?.summary) {
+          console.log('Fetched summary data:', bestResult.summary);
+          await chrome.storage.local.set({ workSummary: bestResult.summary });
+        }
+
+        if (timestamp || bestResult?.summary) {
+          return { timestamp, summary: bestResult?.summary };
+        }
+
+        // Log debug info for troubleshooting
+        console.log('Failed to find data. Debug info:', debugInfo);
+        if (debugInfo) {
+          await chrome.storage.local.set({ lastFetchDebug: debugInfo });
         }
       }
 
@@ -490,11 +585,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         showTimeSection(); // Show section immediately with placeholder
         showMessage('出勤時刻を取得中...', 'info');
 
-        // Fetch from site in background
-        const fetchedTimestamp = await fetchClockInTimeFromSite();
-        if (fetchedTimestamp) {
+        // Fetch from site in background (returns { timestamp, summary })
+        const fetchResult = await fetchClockInTimeFromSite();
+        if (fetchResult) {
           showMessage('', ''); // Clear message
           updateTimeDisplay(); // Update with fetched time
+          // Display summary if available
+          if (fetchResult.summary) {
+            displaySummary(fetchResult.summary);
+          }
         } else {
           // Show debug info
           const { lastFetchDebug } = await chrome.storage.local.get('lastFetchDebug');
@@ -509,10 +608,103 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       } else {
         showTimeSection();
+        // Try to load cached summary data
+        const { workSummary } = await chrome.storage.local.get('workSummary');
+        if (workSummary) {
+          displaySummary(workSummary);
+        }
       }
     } else {
       hideTimeSection();
+      hideSummarySection();
     }
+  }
+
+  // Parse time string like "152:00" or "-89:17" to minutes
+  function parseTimeToMinutes(timeStr) {
+    if (!timeStr || timeStr === '--:--') return null;
+    const isNegative = timeStr.startsWith('-');
+    const cleanTime = timeStr.replace('-', '');
+    const parts = cleanTime.split(':');
+    if (parts.length < 2) return null;
+    const hours = parseInt(parts[0], 10);
+    const minutes = parseInt(parts[1], 10);
+    if (isNaN(hours) || isNaN(minutes)) return null;
+    const totalMinutes = hours * 60 + minutes;
+    return isNegative ? -totalMinutes : totalMinutes;
+  }
+
+  // Format minutes to time string like "8:00" or "-1:30"
+  function formatMinutesToTime(totalMinutes) {
+    if (totalMinutes === null) return '--:--';
+    const isNegative = totalMinutes < 0;
+    const absMinutes = Math.abs(totalMinutes);
+    const hours = Math.floor(absMinutes / 60);
+    const minutes = absMinutes % 60;
+    const timeStr = `${hours}:${String(minutes).padStart(2, '0')}`;
+    return isNegative ? `-${timeStr}` : timeStr;
+  }
+
+  // Display summary data
+  function displaySummary(summary) {
+    if (!summary) {
+      hideSummarySection();
+      return;
+    }
+
+    // Display basic values
+    scheduledHoursEl.textContent = summary.scheduledHours || '--:--';
+    totalHoursEl.textContent = summary.totalHours || '--:--';
+    overUnderHoursEl.textContent = summary.overUnderHours || '--:--';
+
+    // Style over/under hours (negative = red, positive = green)
+    const overUnder = summary.overUnderHours || '';
+    if (overUnder.startsWith('-')) {
+      overUnderHoursEl.classList.add('negative');
+      overUnderHoursEl.classList.remove('positive');
+    } else if (overUnder && overUnder !== '--:--' && overUnder !== '0:00') {
+      overUnderHoursEl.classList.add('positive');
+      overUnderHoursEl.classList.remove('negative');
+    } else {
+      overUnderHoursEl.classList.remove('negative', 'positive');
+    }
+
+    // Calculate remaining days
+    const scheduledDays = parseInt(summary.scheduledDays, 10);
+    const actualDays = parseInt(summary.actualDays, 10);
+    let remainingDays = null;
+
+    if (!isNaN(scheduledDays) && !isNaN(actualDays)) {
+      remainingDays = scheduledDays - actualDays;
+      remainingDaysEl.textContent = `${remainingDays}日`;
+    } else {
+      remainingDaysEl.textContent = '--日';
+    }
+
+    // Calculate required hours per day
+    const overUnderMinutes = parseTimeToMinutes(summary.overUnderHours);
+    if (remainingDays !== null && remainingDays > 0 && overUnderMinutes !== null && overUnderMinutes < 0) {
+      // Need to work |overUnderMinutes| more over remainingDays
+      const requiredMinutesPerDay = Math.ceil(Math.abs(overUnderMinutes) / remainingDays);
+      requiredPerDayEl.textContent = formatMinutesToTime(requiredMinutesPerDay);
+      requiredPerDayEl.classList.remove('negative', 'positive');
+    } else if (overUnderMinutes !== null && overUnderMinutes >= 0) {
+      // Already met or exceeded hours
+      requiredPerDayEl.textContent = '達成済み';
+      requiredPerDayEl.classList.add('positive');
+      requiredPerDayEl.classList.remove('negative');
+    } else {
+      requiredPerDayEl.textContent = '--:--';
+      requiredPerDayEl.classList.remove('negative', 'positive');
+    }
+
+    // Show summary section
+    summarySection.classList.remove('hidden');
+  }
+
+  // Hide summary section
+  function hideSummarySection() {
+    summarySection.classList.add('hidden');
   }
 
   async function performLogin() {
