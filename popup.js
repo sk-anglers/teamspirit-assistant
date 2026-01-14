@@ -89,33 +89,40 @@ document.addEventListener('DOMContentLoaded', async () => {
     // First check if there's already a TeamSpirit tab open
     const existingTab = await findTeamSpiritTab();
 
-    // Check if it's a login page (not logged in)
-    const isLoginPage = existingTab && (
-      (existingTab.url && (existingTab.url.includes('my.salesforce.com') || existingTab.url.includes('/login'))) ||
-      (existingTab.title && (existingTab.title.includes('ログイン') || existingTab.title.toLowerCase().includes('login')))
-    );
+    if (existingTab) {
+      // Check if it's a login page (not logged in)
+      const isLoginPage = (
+        (existingTab.url && (existingTab.url.includes('my.salesforce.com') || existingTab.url.includes('/login'))) ||
+        (existingTab.title && (existingTab.title.includes('ログイン') || existingTab.title.toLowerCase().includes('login')))
+      );
 
-    // Check if logged in (TeamSpirit main page, not login page)
-    const isLoggedIn = existingTab && !isLoginPage && (
-      (existingTab.url && existingTab.url.includes('lightning.force.com')) ||
-      (existingTab.url && existingTab.url.includes('lightning/page')) ||
-      (existingTab.title && existingTab.title.includes('Salesforce'))
-    );
+      // Check if logged in (TeamSpirit main page, not login page)
+      const isLoggedIn = !isLoginPage && (
+        (existingTab.url && existingTab.url.includes('lightning.force.com')) ||
+        (existingTab.url && existingTab.url.includes('lightning/page'))
+      );
 
-    if (isLoggedIn) {
-      // TeamSpirit is already open and logged in
-      await chrome.storage.local.set({ isLoggedIn: true });
-      showPunchSection();
-      showStatus('ログイン済み', 'logged-in');
-      return;
+      if (isLoggedIn) {
+        // TeamSpirit is already open and logged in
+        await chrome.storage.local.set({ isLoggedIn: true });
+        showPunchSection();
+        showStatus('ログイン済み', 'logged-in');
+        return;
+      } else if (isLoginPage) {
+        // On login page - need to login
+        await chrome.storage.local.set({ isLoggedIn: false });
+        showLoginSection();
+        showStatus('ログインしてください', 'logged-out');
+        return;
+      }
     }
 
-    // Check if we have saved credentials and logged in state
-    if (stored.isLoggedIn && stored.credentials) {
-      showPunchSection();
-      showStatus('ログイン済み', 'logged-in');
-    } else if (stored.credentials) {
-      // Has credentials but not logged in
+    // No TeamSpirit tab found - always show login section
+    // Reset stored login state since we can't verify it
+    await chrome.storage.local.set({ isLoggedIn: false });
+
+    if (stored.credentials) {
+      // Has credentials
       showLoginSection();
       showStatus('ログインしてください', 'logged-out');
     } else {
@@ -217,6 +224,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Check if TeamSpirit tab exists
       tab = await findTeamSpiritTab();
 
+      // Refresh tab info if tab exists
+      if (tab) {
+        tab = await chrome.tabs.get(tab.id);
+      }
+
       // Check if it's a login page
       const isOnLoginPage = tab && (
         (tab.url && (tab.url.includes('my.salesforce.com') || tab.url.includes('/login'))) ||
@@ -242,13 +254,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Wait for the tab to load
         await waitForTabLoad(tab.id);
+
+        // Get updated tab info after redirect
+        tab = await chrome.tabs.get(tab.id);
+        showMessage('ページ読み込み完了: ' + (tab.url || '').substring(0, 50), 'info');
       }
 
-      // Wait for content script
+      // Check if now on login page after redirect
+      const isNowOnLoginPage = tab && (
+        (tab.url && tab.url.includes('my.salesforce.com')) ||
+        (tab.title && tab.title.includes('ログイン'))
+      );
+
+      // Wait for content script to be ready
+      showMessage('準備中...', 'info');
       await waitForContentScript(tab.id);
 
       // Check if we're on login page or already logged in
       const pageInfo = await getPageInfo(tab.id);
+      showMessage('ページ検出: ' + (pageInfo.pageType || 'unknown'), 'info');
 
       if (pageInfo.isLoginPage) {
         // We're on login page, fill in credentials
