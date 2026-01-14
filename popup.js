@@ -75,17 +75,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function initializeUI() {
     showStatus('確認中...', '');
 
+    // First check if there's already a TeamSpirit tab open
+    const existingTab = await findTeamSpiritTab();
+    if (existingTab && existingTab.url && existingTab.url.includes('lightning.force.com')) {
+      // TeamSpirit is already open, user is likely logged in
+      await chrome.storage.local.set({ isLoggedIn: true });
+      showPunchSection();
+      showStatus('ログイン済み', 'logged-in');
+      return;
+    }
+
     // Check if we have saved credentials and logged in state
     if (stored.isLoggedIn && stored.credentials) {
-      // Try to verify session is still valid
-      const isValid = await checkSession();
-      if (isValid) {
-        showPunchSection();
-        checkPunchStatus();
-      } else {
-        showLoginSection();
-        showStatus('セッション切れ - 再ログインしてください', 'logged-out');
-      }
+      showPunchSection();
+      showStatus('ログイン済み', 'logged-in');
     } else if (stored.credentials) {
       // Has credentials but not logged in
       showLoginSection();
@@ -94,28 +97,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       // No credentials
       showLoginSection();
       showStatus('ログイン情報を入力してください', 'logged-out');
-    }
-  }
-
-  async function checkSession() {
-    try {
-      const tab = await findTeamSpiritTab();
-      if (tab) {
-        // Tab exists, try to ping content script
-        return new Promise((resolve) => {
-          chrome.tabs.sendMessage(tab.id, { action: 'ping' }, (response) => {
-            if (chrome.runtime.lastError || !response) {
-              resolve(false);
-            } else {
-              resolve(true);
-            }
-          });
-        });
-      }
-      // No tab open, assume session might be valid (will verify on punch)
-      return true;
-    } catch (error) {
-      return false;
     }
   }
 
@@ -381,27 +362,48 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  function waitForContentScript(tabId, maxRetries = 15) {
-    return new Promise((resolve, reject) => {
-      let retries = 0;
+  async function waitForContentScript(tabId, maxRetries = 20) {
+    let retries = 0;
+    let injected = false;
 
-      const tryConnect = () => {
-        chrome.tabs.sendMessage(tabId, { action: 'ping' }, (response) => {
-          if (chrome.runtime.lastError || !response) {
-            retries++;
-            if (retries >= maxRetries) {
-              reject(new Error('ページの読み込みに失敗しました'));
-              return;
+    while (retries < maxRetries) {
+      try {
+        const response = await new Promise((resolve) => {
+          chrome.tabs.sendMessage(tabId, { action: 'ping' }, (resp) => {
+            if (chrome.runtime.lastError) {
+              resolve(null);
+            } else {
+              resolve(resp);
             }
-            setTimeout(tryConnect, 1000);
-          } else {
-            resolve();
-          }
+          });
         });
-      };
 
-      tryConnect();
-    });
+        if (response && response.ready) {
+          return; // Content script is ready
+        }
+      } catch (e) {
+        // Ignore errors
+      }
+
+      // Try to inject content script if not already tried
+      if (!injected && retries >= 3) {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            files: ['content.js']
+          });
+          injected = true;
+          console.log('Content script injected manually');
+        } catch (e) {
+          console.log('Failed to inject content script:', e);
+        }
+      }
+
+      retries++;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+
+    throw new Error('ページの読み込みに失敗しました');
   }
 
   function getPageInfo(tabId) {
