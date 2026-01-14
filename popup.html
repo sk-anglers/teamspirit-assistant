@@ -14,30 +14,56 @@
       <span class="status-text">状態を確認中...</span>
     </div>
 
-    <div class="location-selector">
-      <label for="location">勤務場所:</label>
-      <select id="location">
-        <option value="remote">リモート</option>
-        <option value="office">オフィス</option>
-        <option value="direct-to-office">直行→オフィス</option>
-        <option value="office-to-direct">オフィス→直帰</option>
-        <option value="direct">直行直帰</option>
-      </select>
+    <!-- Login Section -->
+    <div id="loginSection" class="section hidden">
+      <div class="login-form">
+        <div class="form-group">
+          <label for="email">メールアドレス</label>
+          <input type="email" id="email" placeholder="example@company.com" autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label for="password">パスワード</label>
+          <input type="password" id="password" placeholder="パスワード" autocomplete="current-password">
+        </div>
+        <div class="form-group checkbox-group">
+          <label>
+            <input type="checkbox" id="saveCredentials" checked>
+            ログイン情報を保存
+          </label>
+        </div>
+        <button id="loginBtn" class="btn btn-login">ログイン</button>
+      </div>
     </div>
 
-    <div class="buttons">
-      <button id="clockIn" class="btn btn-in">
-        出勤
-      </button>
-      <button id="clockOut" class="btn btn-out">
-        退勤
-      </button>
+    <!-- Punch Section -->
+    <div id="punchSection" class="section hidden">
+      <div class="location-selector">
+        <label for="location">勤務場所:</label>
+        <select id="location">
+          <option value="remote">リモート</option>
+          <option value="office">オフィス</option>
+          <option value="direct-to-office">直行→オフィス</option>
+          <option value="office-to-direct">オフィス→直帰</option>
+          <option value="direct">直行直帰</option>
+        </select>
+      </div>
+
+      <div class="buttons">
+        <button id="clockIn" class="btn btn-in">
+          出勤
+        </button>
+        <button id="clockOut" class="btn btn-out">
+          退勤
+        </button>
+      </div>
     </div>
 
     <div class="message" id="message"></div>
 
     <div class="footer">
       <a href="#" id="openTeamSpirit">TeamSpiritを開く</a>
+      <span class="separator">|</span>
+      <a href="#" id="logoutLink" class="hidden">ログアウト</a>
     </div>
   </div>
 

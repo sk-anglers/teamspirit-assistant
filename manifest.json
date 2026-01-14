@@ -1,15 +1,17 @@
 {
   "manifest_version": 3,
   "name": "TeamSpirit Quick Punch",
-  "version": "1.0.0",
-  "description": "TeamSpiritの打刻をワンクリックで行える拡張機能",
+  "version": "1.1.0",
+  "description": "TeamSpiritの打刻をワンクリックで行える拡張機能（ログイン機能付き）",
   "permissions": [
     "activeTab",
     "storage",
     "tabs"
   ],
   "host_permissions": [
-    "https://teamspirit-74532.lightning.force.com/*"
+    "https://teamspirit-74532.lightning.force.com/*",
+    "https://login.salesforce.com/*",
+    "https://*.salesforce.com/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -26,7 +28,11 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://teamspirit-74532.lightning.force.com/*"],
+      "matches": [
+        "https://teamspirit-74532.lightning.force.com/*",
+        "https://login.salesforce.com/*",
+        "https://*.salesforce.com/*"
+      ],
       "js": ["content.js"],
       "run_at": "document_idle"
     }

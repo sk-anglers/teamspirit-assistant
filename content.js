@@ -1,5 +1,5 @@
 // TeamSpirit Quick Punch - Content Script
-// This script interacts with the TeamSpirit page
+// This script interacts with both login page and TeamSpirit page
 
 (function() {
   'use strict';
@@ -13,23 +13,74 @@
     'direct': '直行直帰'
   };
 
+  // Detect current page type
+  function getPageType() {
+    const url = window.location.href;
+
+    if (url.includes('login.salesforce.com') || url.includes('/login')) {
+      return 'login';
+    } else if (url.includes('lightning.force.com')) {
+      return 'teamspirit';
+    }
+
+    return 'unknown';
+  }
+
   // Listen for messages from popup
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    const pageType = getPageType();
+
     if (request.action === 'ping') {
-      // Respond to ping to confirm content script is ready
-      sendResponse({ ready: true });
+      sendResponse({ ready: true, pageType });
       return;
-    } else if (request.action === 'getStatus') {
+    }
+
+    if (request.action === 'getPageInfo') {
+      sendResponse({
+        isLoginPage: pageType === 'login',
+        isTeamSpiritPage: pageType === 'teamspirit',
+        url: window.location.href
+      });
+      return;
+    }
+
+    if (request.action === 'getStatus') {
       const status = getCurrentStatus();
       sendResponse(status);
-    } else if (request.action === 'clockIn') {
+      return;
+    }
+
+    if (request.action === 'login') {
+      if (pageType !== 'login') {
+        sendResponse({ success: false, error: 'ログインページではありません' });
+        return;
+      }
+      performLogin(request.email, request.password).then(result => {
+        sendResponse(result);
+      }).catch(error => {
+        sendResponse({ success: false, error: error.message });
+      });
+      return true;
+    }
+
+    if (request.action === 'clockIn') {
+      if (pageType !== 'teamspirit') {
+        sendResponse({ success: false, error: 'TeamSpiritページではありません' });
+        return;
+      }
       performClockIn(request.location).then(result => {
         sendResponse(result);
       }).catch(error => {
         sendResponse({ success: false, error: error.message });
       });
-      return true; // Keep message channel open for async response
-    } else if (request.action === 'clockOut') {
+      return true;
+    }
+
+    if (request.action === 'clockOut') {
+      if (pageType !== 'teamspirit') {
+        sendResponse({ success: false, error: 'TeamSpiritページではありません' });
+        return;
+      }
       performClockOut(request.location).then(result => {
         sendResponse(result);
       }).catch(error => {
@@ -39,15 +90,68 @@
     }
   });
 
+  // ==================== Login Functions ====================
+
+  async function performLogin(email, password) {
+    try {
+      // Find username/email field
+      const usernameField = document.getElementById('username') ||
+                           document.querySelector('input[name="username"]') ||
+                           document.querySelector('input[type="email"]') ||
+                           document.querySelector('input[autocomplete="username"]');
+
+      // Find password field
+      const passwordField = document.getElementById('password') ||
+                           document.querySelector('input[name="pw"]') ||
+                           document.querySelector('input[type="password"]');
+
+      // Find login button
+      const loginButton = document.getElementById('Login') ||
+                         document.querySelector('input[name="Login"]') ||
+                         document.querySelector('input[type="submit"]') ||
+                         document.querySelector('button[type="submit"]');
+
+      if (!usernameField) {
+        throw new Error('メールアドレス入力欄が見つかりません');
+      }
+
+      if (!passwordField) {
+        throw new Error('パスワード入力欄が見つかりません');
+      }
+
+      if (!loginButton) {
+        throw new Error('ログインボタンが見つかりません');
+      }
+
+      // Fill in credentials
+      usernameField.value = email;
+      usernameField.dispatchEvent(new Event('input', { bubbles: true }));
+
+      await wait(200);
+
+      passwordField.value = password;
+      passwordField.dispatchEvent(new Event('input', { bubbles: true }));
+
+      await wait(200);
+
+      // Click login button
+      loginButton.click();
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ==================== TeamSpirit Functions ====================
+
   function getCurrentStatus() {
     try {
-      // Try to find the punch area
       const punchArea = findPunchArea();
       if (!punchArea) {
         return { status: '打刻エリアが見つかりません', isWorking: false };
       }
 
-      // Check if there's a clock-out button enabled (meaning user has clocked in)
       const clockOutBtn = findButtonByText('退勤');
       const clockInBtn = findButtonByText('出勤');
 
@@ -67,8 +171,6 @@
     try {
       // First, select the location
       await selectLocation(location);
-
-      // Wait a moment for the UI to update
       await wait(500);
 
       // Find and click the clock-in button
@@ -82,8 +184,6 @@
       }
 
       clockInBtn.click();
-
-      // Wait for the action to complete
       await wait(1000);
 
       return { success: true };
@@ -94,7 +194,6 @@
 
   async function performClockOut(location) {
     try {
-      // Find and click the clock-out button
       const clockOutBtn = findButtonByText('退勤');
       if (!clockOutBtn) {
         throw new Error('退勤ボタンが見つかりません');
@@ -105,8 +204,6 @@
       }
 
       clockOutBtn.click();
-
-      // Wait for the action to complete
       await wait(1000);
 
       return { success: true };
@@ -128,7 +225,6 @@
     for (const btn of buttons) {
       const text = btn.textContent?.trim() || btn.value?.trim() || '';
       if (text === locationText) {
-        // Check if it's already selected
         const isSelected = btn.classList.contains('selected') ||
                           btn.classList.contains('active') ||
                           btn.getAttribute('aria-pressed') === 'true' ||
@@ -159,10 +255,6 @@
   }
 
   function findPunchArea() {
-    // Try to find the punch area by looking for common patterns
-    // TeamSpirit's punch area typically contains date/time and punch buttons
-
-    // Look for elements containing both 出勤 and 退勤
     const allElements = document.querySelectorAll('div, section, article');
 
     for (const el of allElements) {
@@ -186,7 +278,7 @@
       }
     }
 
-    // Method 2: Search in Lightning components (Salesforce specific)
+    // Method 2: Search in Lightning components
     const lightningButtons = document.querySelectorAll('lightning-button, lightning-button-stateful');
     for (const btn of lightningButtons) {
       if (btn.textContent?.trim() === text) {
@@ -213,6 +305,6 @@
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  // Notify that content script is ready
-  console.log('TeamSpirit Quick Punch: Content script loaded');
+  // Log page type for debugging
+  console.log('TeamSpirit Quick Punch: Content script loaded on', getPageType(), 'page');
 })();
