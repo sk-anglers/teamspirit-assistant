@@ -44,6 +44,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   logoutLink.addEventListener('click', async (e) => {
     e.preventDefault();
     await chrome.storage.local.set({ isLoggedIn: false });
+
+    // Close TeamSpirit tab if open
+    const tab = await findTeamSpiritTab();
+    if (tab) {
+      try {
+        await chrome.tabs.remove(tab.id);
+      } catch (err) {
+        // Tab might already be closed
+      }
+    }
+
     showLoginSection();
     showMessage('ログアウトしました', 'info');
   });
@@ -191,6 +202,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       // Check if TeamSpirit tab exists
       tab = await findTeamSpiritTab();
+
+      // If tab exists and is on TeamSpirit page (not login), user is already logged in
+      if (tab && tab.url && tab.url.includes('lightning.force.com') && !tab.url.includes('login')) {
+        showMessage('既にログイン済みです', 'success');
+        return { success: true };
+      }
 
       if (!tab) {
         // Open TeamSpirit - it will redirect to login if not authenticated
