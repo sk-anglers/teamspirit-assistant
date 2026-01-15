@@ -8,10 +8,46 @@
 </head>
 <body>
   <div class="container">
-    <h1>TeamSpirit</h1>
+    <div class="header">
+      <h1>TeamSpirit</h1>
+      <span class="header-warning hidden" id="headerWarning" title="打刻漏れがあります">!</span>
+    </div>
+
+    <!-- Today's Day Type Section -->
+    <div id="todaySection" class="section hidden">
+      <div class="today-display">
+        <span class="today-date" id="todayDate">--/--</span>
+        <span class="today-dayofweek" id="todayDayOfWeek">(-)</span>
+        <span class="today-holiday" id="todayHoliday"></span>
+        <span class="today-type" id="todayType">--</span>
+      </div>
+    </div>
 
     <div class="status" id="status">
       <span class="status-text">状態を確認中...</span>
+    </div>
+
+    <!-- Punch Section -->
+    <div id="punchSection" class="section hidden">
+      <div class="location-selector">
+        <label for="location">勤務場所:</label>
+        <select id="location">
+          <option value="remote">リモート</option>
+          <option value="office">オフィス</option>
+          <option value="direct-to-office">直行→オフィス</option>
+          <option value="office-to-direct">オフィス→直帰</option>
+          <option value="direct">直行直帰</option>
+        </select>
+      </div>
+
+      <div class="buttons">
+        <button id="clockIn" class="btn btn-in">
+          出勤
+        </button>
+        <button id="clockOut" class="btn btn-out">
+          退勤
+        </button>
+      </div>
     </div>
 
     <!-- Time Display Section -->
@@ -73,6 +109,22 @@
       </div>
     </div>
 
+    <!-- Missed Punches Section -->
+    <div id="missedPunchSection" class="section hidden">
+      <div class="summary-display">
+        <div class="summary-header" id="missedPunchToggle">
+          <span class="toggle-icon">▼</span>
+          <span>打刻漏れ</span>
+          <span class="missed-count" id="missedPunchCount"></span>
+        </div>
+        <div class="summary-content" id="missedPunchContent">
+          <div id="missedPunchList">
+            <!-- 打刻漏れリストがここに入る -->
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Login Section -->
     <div id="loginSection" class="section hidden">
       <div class="login-form">
@@ -91,29 +143,6 @@
           </label>
         </div>
         <button id="loginBtn" class="btn btn-login">ログイン</button>
-      </div>
-    </div>
-
-    <!-- Punch Section -->
-    <div id="punchSection" class="section hidden">
-      <div class="location-selector">
-        <label for="location">勤務場所:</label>
-        <select id="location">
-          <option value="remote">リモート</option>
-          <option value="office">オフィス</option>
-          <option value="direct-to-office">直行→オフィス</option>
-          <option value="office-to-direct">オフィス→直帰</option>
-          <option value="direct">直行直帰</option>
-        </select>
-      </div>
-
-      <div class="buttons">
-        <button id="clockIn" class="btn btn-in">
-          出勤
-        </button>
-        <button id="clockOut" class="btn btn-out">
-          退勤
-        </button>
       </div>
     </div>
 

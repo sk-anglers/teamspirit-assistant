@@ -76,12 +76,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   const overUnderHoursEl = document.getElementById('overUnderHours');
   const remainingDaysEl = document.getElementById('remainingDays');
   const requiredPerDayEl = document.getElementById('requiredPerDay');
+  const missedPunchSection = document.getElementById('missedPunchSection');
+  const missedPunchToggle = document.getElementById('missedPunchToggle');
+  const missedPunchContent = document.getElementById('missedPunchContent');
+  const missedPunchCount = document.getElementById('missedPunchCount');
+  const missedPunchList = document.getElementById('missedPunchList');
+  const todaySection = document.getElementById('todaySection');
+  const todayDateEl = document.getElementById('todayDate');
+  const todayDayOfWeekEl = document.getElementById('todayDayOfWeek');
+  const todayHolidayEl = document.getElementById('todayHoliday');
+  const todayTypeEl = document.getElementById('todayType');
+  const headerWarning = document.getElementById('headerWarning');
 
   // Time update interval
   let timeUpdateInterval = null;
 
   // Load saved data
-  const stored = await chrome.storage.local.get(['savedLocation', 'savedEmail', 'isLoggedIn', 'summaryCollapsed', 'encryptedPassword']);
+  const stored = await chrome.storage.local.get(['savedLocation', 'savedEmail', 'isLoggedIn', 'summaryCollapsed', 'missedPunchCollapsed', 'encryptedPassword']);
 
   if (stored.savedLocation) {
     locationSelect.value = stored.savedLocation;
@@ -113,6 +124,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     chrome.storage.local.set({ summaryCollapsed: isCollapsed });
   });
 
+  // Load missed punch collapsed state (default: collapsed)
+  if (stored.missedPunchCollapsed !== false) {
+    missedPunchToggle.classList.add('collapsed');
+    missedPunchContent.classList.add('collapsed');
+  }
+
+  // Missed punch toggle event
+  missedPunchToggle.addEventListener('click', () => {
+    const isCollapsed = missedPunchToggle.classList.toggle('collapsed');
+    missedPunchContent.classList.toggle('collapsed');
+    chrome.storage.local.set({ missedPunchCollapsed: isCollapsed });
+  });
+
+  // Header warning click - expand and scroll to missed punch section
+  headerWarning.addEventListener('click', () => {
+    // Expand the missed punch section
+    missedPunchToggle.classList.remove('collapsed');
+    missedPunchContent.classList.remove('collapsed');
+    chrome.storage.local.set({ missedPunchCollapsed: false });
+    // Scroll to missed punch section
+    missedPunchSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
   // Save location preference when changed
   locationSelect.addEventListener('change', () => {
     chrome.storage.local.set({ savedLocation: locationSelect.value });
@@ -142,6 +176,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showLoginSection();
     hideTimeSection();
     hideSummarySection();
+    hideMissedPunchSection();
     showStatus('ログアウトしました', 'logged-out');
     showMessage('', '');
   });
@@ -194,6 +229,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await chrome.storage.local.set({ isLoggedIn: true });
         showPunchSection();
         checkPunchStatus();
+        loadMissedPunchData();
         return;
       } else if (isLoginPage) {
         // On login page - need to login
@@ -223,12 +259,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     loginSection.classList.remove('hidden');
     punchSection.classList.add('hidden');
     logoutLink.classList.add('hidden');
+    hideTodaySection();
   }
 
   function showPunchSection() {
     loginSection.classList.add('hidden');
     punchSection.classList.remove('hidden');
     logoutLink.classList.remove('hidden');
+    showTodaySection();
   }
 
   function showStatus(text, className) {
@@ -1011,6 +1049,157 @@ document.addEventListener('DOMContentLoaded', async () => {
     summarySection.classList.add('hidden');
   }
 
+  // Update missed punch section
+  function updateMissedPunchSection(data) {
+    if (!data) {
+      missedPunchCount.textContent = '確認中...';
+      missedPunchCount.className = 'missed-count';
+      missedPunchList.innerHTML = '';
+      headerWarning.classList.add('hidden');
+      return;
+    }
+
+    if (!data.success) {
+      missedPunchCount.textContent = '取得失敗';
+      missedPunchCount.className = 'missed-count has-missed';
+      missedPunchList.innerHTML = '';
+      headerWarning.classList.add('hidden');
+      return;
+    }
+
+    // Update count badge and header warning
+    if (data.count === 0) {
+      missedPunchCount.textContent = '漏れなし';
+      missedPunchCount.className = 'missed-count no-missed';
+      missedPunchList.innerHTML = '<div class="missed-punch-empty">打刻漏れはありません</div>';
+      headerWarning.classList.add('hidden');
+    } else {
+      missedPunchCount.textContent = `${data.count}件`;
+      missedPunchCount.className = 'missed-count has-missed';
+      headerWarning.classList.remove('hidden');
+
+      // Build list HTML
+      let listHtml = '';
+      data.items.forEach(item => {
+        const dateParts = item.date.split('-');
+        const month = parseInt(dateParts[1], 10);
+        const day = parseInt(dateParts[2], 10);
+        const dateDisplay = `${month}/${day} (${item.dayOfWeek})`;
+
+        let labelClass = '';
+        let labelText = '';
+        if (item.type === 'no-both') {
+          labelClass = 'type-both';
+          labelText = '出退';
+        } else if (item.type === 'no-clock-in') {
+          labelClass = 'type-in';
+          labelText = '出';
+        } else if (item.type === 'no-clock-out') {
+          labelClass = 'type-out';
+          labelText = '退';
+        }
+
+        listHtml += `
+          <div class="missed-punch-item">
+            <span class="missed-punch-date">${dateDisplay}</span>
+            <span class="missed-punch-label ${labelClass}">${labelText}</span>
+          </div>
+        `;
+      });
+
+      missedPunchList.innerHTML = listHtml;
+    }
+
+    // Show section
+    missedPunchSection.classList.remove('hidden');
+  }
+
+  // Hide missed punch section
+  function hideMissedPunchSection() {
+    missedPunchSection.classList.add('hidden');
+  }
+
+  // Load missed punch data (always fetch fresh)
+  async function loadMissedPunchData() {
+    // Show loading state
+    missedPunchCount.textContent = '確認中...';
+    missedPunchCount.className = 'missed-count';
+    missedPunchList.innerHTML = '';
+    missedPunchSection.classList.remove('hidden');
+
+    try {
+      // Request fresh data from background
+      chrome.runtime.sendMessage({ type: 'CHECK_MISSED_PUNCHES' }, (response) => {
+        if (response) {
+          updateMissedPunchSection(response);
+        } else {
+          updateMissedPunchSection({ success: false });
+        }
+      });
+    } catch (e) {
+      console.error('Failed to load missed punch data:', e);
+      updateMissedPunchSection({ success: false });
+    }
+  }
+
+  // Load today's workday status
+  async function loadTodayWorkday() {
+    // Set today's date and day of week immediately
+    const today = new Date();
+    const month = today.getMonth() + 1;
+    const day = today.getDate();
+    const days = ['日', '月', '火', '水', '木', '金', '土'];
+    const dayOfWeek = days[today.getDay()];
+
+    todayDateEl.textContent = `${month}/${day}`;
+    todayDayOfWeekEl.textContent = `(${dayOfWeek})`;
+    todayHolidayEl.textContent = '';
+    todayTypeEl.textContent = '確認中...';
+    todayTypeEl.className = 'today-type';
+    todaySection.classList.remove('hidden');
+
+    try {
+      chrome.runtime.sendMessage({ type: 'CHECK_TODAY_WORKDAY' }, (response) => {
+        if (chrome.runtime.lastError || !response || !response.success) {
+          todayTypeEl.textContent = '--';
+          todayTypeEl.className = 'today-type';
+          return;
+        }
+
+        // Update holiday name if applicable
+        if (response.holidayName) {
+          todayHolidayEl.textContent = response.holidayName;
+        } else {
+          todayHolidayEl.textContent = '';
+        }
+
+        // Update type badge (出勤日 or 休日)
+        if (response.isWorkday) {
+          todayTypeEl.textContent = '出勤日';
+          todayTypeEl.className = 'today-type workday';
+        } else {
+          todayTypeEl.textContent = '休日';
+          todayTypeEl.className = 'today-type holiday';
+        }
+      });
+    } catch (e) {
+      console.error('Failed to load today workday status:', e);
+      todayTypeEl.textContent = '--';
+      todayTypeEl.className = 'today-type';
+    }
+  }
+
+  // Show today section
+  function showTodaySection() {
+    todaySection.classList.remove('hidden');
+    loadTodayWorkday();
+  }
+
+  // Hide today section
+  function hideTodaySection() {
+    todaySection.classList.add('hidden');
+  }
+
   async function performLogin() {
     const email = emailInput.value.trim();
     const password = passwordInput.value;
@@ -1048,6 +1237,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         showPunchSection();
         showStatus('ログイン済み', 'logged-in');
         checkPunchStatus();
+        loadMissedPunchData();
       } else {
         showMessage(result.error || 'ログインに失敗しました', 'error');
       }
@@ -1245,6 +1435,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           hideTimeSection();
           hideSummarySection();
         }
+
+        // キャッシュを無効化してから打刻漏れデータを再取得
+        chrome.runtime.sendMessage({ type: 'INVALIDATE_CACHE' }, () => {
+          loadMissedPunchData();
+        });
 
         // Close auto-opened tab
         if (autoOpenedTab) {

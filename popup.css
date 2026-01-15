@@ -14,13 +14,48 @@ body {
   padding: 16px;
 }
 
+.header {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #0070d2;
+}
+
 h1 {
   font-size: 18px;
   color: #0070d2;
   text-align: center;
-  margin-bottom: 16px;
-  padding-bottom: 12px;
-  border-bottom: 2px solid #0070d2;
+}
+
+.header-warning {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  background: #c23934;
+  color: #fff;
+  border-radius: 50%;
+  font-size: 14px;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  animation: pulse 2s infinite;
+}
+
+.header-warning:hover {
+  background: #a32d28;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
 }
 
 .status {
@@ -276,6 +311,52 @@ h1 {
   color: #706e6b;
 }
 
+/* Today Display */
+.today-display {
+  background: #fff;
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.today-date {
+  font-size: 16px;
+  font-weight: bold;
+  color: #333;
+}
+
+.today-dayofweek {
+  font-size: 14px;
+  color: #666;
+}
+
+.today-holiday {
+  font-size: 11px;
+  color: #c23934;
+  font-weight: bold;
+}
+
+.today-type {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: bold;
+  padding: 4px 10px;
+  border-radius: 12px;
+}
+
+.today-type.workday {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.today-type.holiday {
+  background: #f5f5f5;
+  color: #706e6b;
+}
+
 /* Time Display */
 .time-display {
   background: #fff;
@@ -417,4 +498,68 @@ h1 {
 
 .summary-value.positive {
   color: #2e844a;
+}
+
+/* Missed Punch Section */
+.missed-count {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: bold;
+}
+
+.missed-count.has-missed {
+  background: #fde7e7;
+  color: #c23934;
+}
+
+.missed-count.no-missed {
+  background: #e8f5e9;
+  color: #2e844a;
+}
+
+.missed-punch-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+.missed-punch-item:not(:last-child) {
+  border-bottom: 1px solid #eee;
+}
+
+.missed-punch-date {
+  color: #333;
+}
+
+.missed-punch-label {
+  font-weight: bold;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+}
+
+.missed-punch-label.type-out {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.missed-punch-label.type-in {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.missed-punch-label.type-both {
+  background: #fde7e7;
+  color: #c23934;
+}
+
+.missed-punch-empty {
+  text-align: center;
+  color: #2e844a;
+  font-size: 12px;
+  padding: 8px 0;
 }

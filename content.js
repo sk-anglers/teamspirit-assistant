@@ -330,6 +330,164 @@
     return data;
   }
 
+  // ==================== 打刻漏れデータ ====================
+
+  function updateMissedPunchDisplay(data) {
+    if (!infoPanel) return;
+
+    const missedSection = infoPanel.querySelector('#ts-missed-section');
+    const missedCountEl = infoPanel.querySelector('#ts-missed-count');
+    const missedListEl = infoPanel.querySelector('#ts-missed-list');
+
+    if (!missedSection || !missedCountEl || !missedListEl) return;
+
+    // セクションを表示
+    missedSection.style.display = 'block';
+
+    if (!data) {
+      missedCountEl.textContent = '確認中...';
+      missedCountEl.style.color = '#666';
+      missedListEl.innerHTML = '';
+      return;
+    }
+
+    if (!data.success) {
+      missedCountEl.textContent = '取得失敗';
+      missedCountEl.style.color = '#d93025';
+      missedListEl.innerHTML = '';
+      return;
+    }
+
+    if (data.count === 0) {
+      missedCountEl.textContent = '漏れなし';
+      missedCountEl.style.color = '#0d904f';
+      missedListEl.innerHTML = '';
+      return;
+    }
+
+    // 件数表示
+    missedCountEl.textContent = `${data.count}件`;
+    missedCountEl.style.color = '#d93025';
+
+    // リスト表示（最大5件）
+    const maxDisplay = 5;
+    const items = data.items.slice(0, maxDisplay);
+    let listHtml = '';
+
+    items.forEach(item => {
+      // 日付フォーマット: M/D (曜)
+      const dateParts = item.date.split('-');
+      const month = parseInt(dateParts[1], 10);
+      const day = parseInt(dateParts[2], 10);
+      const dateDisplay = `${month}/${day} (${item.dayOfWeek})`;
+
+      // ラベルの色分け
+      let labelHtml = '';
+      if (item.label) {
+        let labelColor = '#ea8600'; // デフォルト（オレンジ）
+        if (item.type === 'no-both') {
+          labelColor = '#d93025'; // 両方漏れは赤
+        } else if (item.type === 'no-clock-in') {
+          labelColor = '#1a73e8'; // 出勤漏れは青
+        } else if (item.type === 'no-clock-out') {
+          labelColor = '#ea8600'; // 退勤漏れはオレンジ
+        }
+        labelHtml = ` <span style="color:${labelColor}; font-weight:600;">${item.label}</span>`;
+      }
+      listHtml += `<div style="margin-bottom:2px;">${dateDisplay}${labelHtml}</div>`;
+    });
+
+    if (data.count > maxDisplay) {
+      listHtml += `<div style="color:#999;">他${data.count - maxDisplay}件</div>`;
+    }
+
+    missedListEl.innerHTML = listHtml;
+  }
+
+  // 打刻漏れデータを直接取得（キャッシュなし）
+  async function loadMissedPunchData() {
+    // 初期表示
+    updateMissedPunchDisplay(null);
+
+    try {
+      if (!chrome.runtime?.id) return;
+
+      chrome.runtime.sendMessage({ type: 'CHECK_MISSED_PUNCHES' }, (response) => {
+        if (chrome.runtime.lastError) {
+          updateMissedPunchDisplay({ success: false });
+          return;
+        }
+        updateMissedPunchDisplay(response);
+      });
+    } catch (e) {
+      updateMissedPunchDisplay({ success: false });
+    }
+  }
+
+  // ==================== 本日情報表示 ====================
+
+  function updateTodayDisplay(data) {
+    if (!infoPanel) return;
+
+    const todayDateEl = infoPanel.querySelector('#ts-today-date');
+    const todayHolidayEl = infoPanel.querySelector('#ts-today-holiday');
+    const todayTypeEl = infoPanel.querySelector('#ts-today-type');
+
+    if (!todayDateEl || !todayTypeEl) return;
+
+    // 日付と曜日を即座に設定
+    const today = new Date();
+    const month = today.getMonth() + 1;
+    const day = today.getDate();
+    const days = ['日', '月', '火', '水', '木', '金', '土'];
+    const dayOfWeek = days[today.getDay()];
+    todayDateEl.textContent = `${month}/${day} (${dayOfWeek})`;
+
+    if (!data || !data.success) {
+      todayTypeEl.textContent = '--';
+      todayTypeEl.style.background = '#f5f5f5';
+      todayTypeEl.style.color = '#666';
+      if (todayHolidayEl) todayHolidayEl.textContent = '';
+      return;
+    }
+
+    // 祝日名を表示
+    if (todayHolidayEl) {
+      todayHolidayEl.textContent = data.holidayName || '';
+    }
+
+    // 出勤日/休日バッジ
+    if (data.isWorkday) {
+      todayTypeEl.textContent = '出勤日';
+      todayTypeEl.style.background = '#e8f0fe';
+      todayTypeEl.style.color = '#1a73e8';
+    } else {
+      todayTypeEl.textContent = '休日';
+      todayTypeEl.style.background = '#f5f5f5';
+      todayTypeEl.style.color = '#666';
+    }
+  }
+
+  // 本日情報を取得
+  async function loadTodayWorkday() {
+    // 初期表示（日付と曜日だけ）
+    updateTodayDisplay(null);
+
+    try {
+      if (!chrome.runtime?.id) return;
+
+      chrome.runtime.sendMessage({ type: 'CHECK_TODAY_WORKDAY' }, (response) => {
+        if (chrome.runtime.lastError) {
+          updateTodayDisplay(null);
+          return;
+        }
+        updateTodayDisplay(response);
+      });
+    } catch (e) {
+      updateTodayDisplay(null);
+    }
+  }
+
   // ==================== Info Panel UI ====================
 
   function createInfoPanel() {
@@ -340,6 +498,11 @@
         <!-- 勤怠情報欄 -->
         <div style="min-width:100px;">
           <div style="font-weight:bold; color:#1a73e8; border-bottom:2px solid #1a73e8; padding-bottom:3px; margin-bottom:6px;">勤怠情報</div>
+          <div id="ts-today-row" style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:6px;">
+            <span id="ts-today-date" style="font-weight:600;">--/-- (-)</span>
+            <span id="ts-today-holiday" style="font-size:10px; color:#d93025;"></span>
+            <span id="ts-today-type" style="font-size:10px; padding:2px 6px; border-radius:8px; background:#e8f0fe; color:#1a73e8;">--</span>
+          </div>
           <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
             <span style="color:#666;">状態</span>
             <span class="status-badge not-started" id="ts-status-badge">読込中</span>
@@ -393,6 +556,18 @@
           <div style="display:flex; justify-content:space-between; gap:10px;">
             <span style="color:#666;">一日当たり必要</span>
             <span style="font-weight:600; color:#ea8600;" id="ts-required-per-day">--:--</span>
+          </div>
+        </div>
+
+        <!-- 打刻漏れ欄 -->
+        <div id="ts-missed-section" style="min-width:120px; display:none;">
+          <div style="font-weight:bold; color:#1a73e8; border-bottom:2px solid #1a73e8; padding-bottom:3px; margin-bottom:6px;">打刻漏れ</div>
+          <div style="display:flex; justify-content:space-between; margin-bottom:6px; gap:10px;">
+            <span style="color:#666;">件数</span>
+            <span style="font-weight:600;" id="ts-missed-count">確認中...</span>
+          </div>
+          <div id="ts-missed-list" style="font-size:11px; color:#666;">
+            <!-- 漏れリストがここに入る -->
           </div>
         </div>
       </div>
@@ -579,6 +754,12 @@
       updateDisplay();
     });
 
+    // 本日情報を読み込む
+    loadTodayWorkday();
+
+    // 打刻漏れデータを読み込む
+    loadMissedPunchData();
+
     // 1秒ごとに更新（現在時刻は常に更新）
     setInterval(updateDisplay, 1000);
   }
@@ -605,6 +786,12 @@
     document.body.appendChild(infoPanel);
 
     loadData().then(() => updateDisplay());
+
+    // 本日情報を読み込む
+    loadTodayWorkday();
+
+    // 打刻漏れデータを読み込む
+    loadMissedPunchData();
 
     // 1秒ごとに更新（現在時刻は常に更新）
     setInterval(updateDisplay, 1000);
@@ -730,9 +917,11 @@
   try {
     chrome.storage.onChanged.addListener((changes, namespace) => {
       if (!isExtensionContextValid()) return;
-      if (namespace === 'local' && changes.attendanceData) {
-        cachedData = changes.attendanceData.newValue;
-        updateDisplay();
+      if (namespace === 'local') {
+        if (changes.attendanceData) {
+          cachedData = changes.attendanceData.newValue;
+          updateDisplay();
+        }
       }
     });
   } catch (e) {}
