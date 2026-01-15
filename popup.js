@@ -417,8 +417,68 @@ document.addEventListener('DOMContentLoaded', async () => {
     await chrome.storage.local.remove('clockInTimestamp');
   }
 
-  // Fetch clock-in time from TeamSpirit attendance table (separate from status detection)
+  // Fetch clock-in time from TeamSpirit via background script
   async function fetchClockInTimeFromSite() {
+    try {
+      console.log('Fetching attendance data via background script...');
+
+      // Request data fetch from background script
+      const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: 'FETCH_ATTENDANCE_DATA' }, (resp) => {
+          if (chrome.runtime.lastError) {
+            console.error('Background fetch error:', chrome.runtime.lastError);
+            resolve(null);
+            return;
+          }
+          resolve(resp);
+        });
+      });
+
+      if (!response?.success || !response?.data) {
+        console.log('No data from background script');
+        return null;
+      }
+
+      const data = response.data;
+      console.log('Got data from background:', data);
+
+      // Data is already saved by background.js, just return the formatted result
+      let clockInTimestamp = null;
+      let clockOutTimestamp = null;
+
+      if (data.clockInTime) {
+        const parts = data.clockInTime.split(':');
+        if (parts.length >= 2) {
+          const d = new Date();
+          d.setHours(parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
+          clockInTimestamp = d.getTime();
+        }
+      }
+
+      if (data.clockOutTime) {
+        const parts = data.clockOutTime.split(':');
+        if (parts.length >= 2) {
+          const d = new Date();
+          d.setHours(parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
+          clockOutTimestamp = d.getTime();
+        }
+      }
+
+      return {
+        clockInTimestamp,
+        clockOutTimestamp,
+        summary: data.summary,
+        isWorking: data.isWorking,
+        hasClockedOut: !!data.clockOutTime
+      };
+    } catch (error) {
+      console.error('Error fetching data:', error);
+      return null;
+    }
+  }
+
+  // Legacy function - kept for reference but no longer used
+  async function fetchClockInTimeFromSite_legacy() {
     let tempTab = null;
     try {
       console.log('Fetching clock-in time from TeamSpirit attendance page...');
@@ -921,9 +981,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       loginBtn.classList.add('loading');
       showMessage('ログイン中...', 'info');
 
-      // Save email to persistent storage if checkbox is checked
+      // Save email to persistent storage if checkbox is checked, otherwise remove it
       if (saveCredentialsCheckbox.checked) {
         await chrome.storage.local.set({ savedEmail: email });
+        console.log('Email saved to storage:', email);
+      } else {
+        await chrome.storage.local.remove('savedEmail');
+        console.log('Email removed from storage');
       }
       // Always save password to session storage (cleared when browser closes)
       await chrome.storage.session.set({ sessionPassword: password });

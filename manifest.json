@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "TeamSpirit Quick Punch",
-  "version": "2.1.1",
-  "description": "TeamSpiritの打刻をワンクリックで行える拡張機能（ログイン機能付き）",
+  "name": "TeamSpirit Assistant",
+  "version": "3.0.0",
+  "description": "TeamSpiritの打刻とホーム画面での勤怠情報表示を行う拡張機能",
   "permissions": [
     "activeTab",
     "storage",
@@ -41,6 +41,7 @@
         "https://*.force.com/*"
       ],
       "js": ["content.js"],
+      "css": ["content-styles.css"],
       "run_at": "document_idle",
       "all_frames": true
     }
