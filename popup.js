@@ -518,9 +518,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     overtimeBadge.textContent = '';
 
     if (monthlyOvertime > OVERTIME_LIMIT) {
+      const excessHours = Math.floor((monthlyOvertime - OVERTIME_LIMIT) / 60);
+      const excessMinutes = (monthlyOvertime - OVERTIME_LIMIT) % 60;
+      const excessText = excessMinutes > 0 ? `${excessHours}:${String(excessMinutes).padStart(2, '0')}` : `${excessHours}`;
       overtimeForecastEl.classList.add('overtime-value', 'danger');
       overtimeAlert.classList.remove('hidden', 'warning');
-      overtimeAlert.textContent = '🚨 月45時間超過中！';
+      overtimeAlert.textContent = `🚨 ${excessText}時間超過中！`;
       overtimeBadge.classList.add('danger');
       overtimeBadge.textContent = '超過中';
     } else if (forecastOvertime > OVERTIME_LIMIT) {
@@ -1244,9 +1247,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (monthlyOvertime > OVERTIME_LIMIT) {
       // 既に45時間超過
+      const excessHours = Math.floor((monthlyOvertime - OVERTIME_LIMIT) / 60);
+      const excessMinutes = (monthlyOvertime - OVERTIME_LIMIT) % 60;
+      const excessText = excessMinutes > 0 ? `${excessHours}:${String(excessMinutes).padStart(2, '0')}` : `${excessHours}`;
       overtimeForecastEl.classList.add('overtime-value', 'danger');
       overtimeAlert.classList.remove('hidden', 'warning');
-      overtimeAlert.textContent = '🚨 月45時間超過中！';
+      overtimeAlert.textContent = `🚨 ${excessText}時間超過中！`;
       overtimeBadge.classList.add('danger');
       overtimeBadge.textContent = '超過中';
     } else if (forecastOvertime > OVERTIME_LIMIT) {
