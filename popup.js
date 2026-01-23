@@ -102,6 +102,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Time update interval
   let timeUpdateInterval = null;
 
+  // Constants for overtime calculation
+  const STANDARD_HOURS_PER_DAY = 8 * 60; // 8時間 = 480分
+  const OVERTIME_LIMIT = 45 * 60; // 45時間 = 2700分
+
   // Load saved data
   const stored = await chrome.storage.local.get(['savedLocation', 'savedEmail', 'isLoggedIn', 'summaryCollapsed', 'missedPunchCollapsed', 'encryptedPassword']);
 
@@ -450,6 +454,87 @@ document.addEventListener('DOMContentLoaded', async () => {
       targetClockOutEl.textContent = '達成済み';
     } else {
       targetClockOutEl.textContent = '--:--';
+    }
+
+    // Update overtime section in real-time
+    if (!isNaN(scheduledDays) && !isNaN(actualDays) && actualDays > 0) {
+      updateOvertimeSectionRealTime(realTimeTotalMinutes, scheduledDays, actualDays);
+    }
+  }
+
+  // Update overtime section in real-time
+  function updateOvertimeSectionRealTime(totalMinutes, scheduledDays, actualDays) {
+    // 勤務日数
+    actualDaysEl.textContent = `${actualDays}日`;
+
+    // 勤務時間（リアルタイム）
+    actualHoursEl.textContent = formatMinutesToTime(totalMinutes);
+
+    // 平均/日
+    const avgMinutesPerDay = Math.round(totalMinutes / actualDays);
+    avgHoursPerDayEl.textContent = formatMinutesToTime(avgMinutesPerDay);
+
+    // 残業/日
+    const avgOvertimePerDay = avgMinutesPerDay - STANDARD_HOURS_PER_DAY;
+    avgOvertimePerDayEl.textContent = avgOvertimePerDay >= 0
+      ? `+${formatMinutesToTime(avgOvertimePerDay)}`
+      : formatMinutesToTime(avgOvertimePerDay);
+
+    // 残業/日の色分け
+    avgOvertimePerDayEl.className = 'summary-value';
+    if (avgOvertimePerDay >= 120) {
+      avgOvertimePerDayEl.classList.add('overtime-value', 'danger');
+    } else if (avgOvertimePerDay >= 60) {
+      avgOvertimePerDayEl.classList.add('overtime-value', 'warning');
+    } else if (avgOvertimePerDay > 0) {
+      avgOvertimePerDayEl.classList.add('overtime-value', 'caution');
+    } else {
+      avgOvertimePerDayEl.classList.add('overtime-value', 'safe');
+    }
+
+    // 月間残業
+    const monthlyOvertime = totalMinutes - (actualDays * STANDARD_HOURS_PER_DAY);
+    monthlyOvertimeEl.textContent = monthlyOvertime >= 0
+      ? `+${formatMinutesToTime(monthlyOvertime)}`
+      : formatMinutesToTime(monthlyOvertime);
+
+    // 月間残業の色分け
+    monthlyOvertimeEl.className = 'summary-value';
+    if (monthlyOvertime > OVERTIME_LIMIT) {
+      monthlyOvertimeEl.classList.add('overtime-value', 'danger');
+    } else if (monthlyOvertime > OVERTIME_LIMIT * 0.8) {
+      monthlyOvertimeEl.classList.add('overtime-value', 'warning');
+    }
+
+    // 月末予測
+    const forecastOvertime = avgOvertimePerDay * scheduledDays;
+    overtimeForecastEl.textContent = forecastOvertime >= 0
+      ? `+${formatMinutesToTime(forecastOvertime)}`
+      : formatMinutesToTime(forecastOvertime);
+
+    // 月末予測の色分けとアラート・バッジ
+    overtimeForecastEl.className = 'summary-value';
+    overtimeBadge.className = 'overtime-badge';
+    overtimeBadge.textContent = '';
+
+    if (monthlyOvertime > OVERTIME_LIMIT) {
+      overtimeForecastEl.classList.add('overtime-value', 'danger');
+      overtimeAlert.classList.remove('hidden', 'warning');
+      overtimeAlert.textContent = '🚨 月45時間超過中！';
+      overtimeBadge.classList.add('danger');
+      overtimeBadge.textContent = '超過中';
+    } else if (forecastOvertime > OVERTIME_LIMIT) {
+      overtimeForecastEl.classList.add('overtime-value', 'warning');
+      overtimeAlert.classList.remove('hidden');
+      overtimeAlert.classList.add('warning');
+      overtimeAlert.textContent = '⚠️ 45時間超過見込み';
+      overtimeBadge.classList.add('warning');
+      overtimeBadge.textContent = '注意';
+    } else {
+      overtimeForecastEl.classList.add('overtime-value', 'safe');
+      overtimeAlert.classList.add('hidden');
+      overtimeBadge.classList.add('safe');
+      overtimeBadge.textContent = '正常';
     }
   }
 
@@ -1096,10 +1181,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     summarySection.classList.add('hidden');
     hideOvertimeSection();
   }
-
-  // Constants for overtime calculation
-  const STANDARD_HOURS_PER_DAY = 8 * 60; // 8時間 = 480分
-  const OVERTIME_LIMIT = 45 * 60; // 45時間 = 2700分
 
   // Update overtime section
   function updateOvertimeSection(summary, totalMinutes, scheduledDays, actualDays) {
