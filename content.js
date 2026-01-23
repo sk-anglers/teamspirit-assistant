@@ -822,12 +822,10 @@
     if (monthlyOvertime > OVERTIME_LIMIT) {
       // 既に45時間超過
       const overtimeHours = Math.floor(monthlyOvertime / 60);
-      const overtimeMinutes = monthlyOvertime % 60;
-      const overtimeText = overtimeMinutes > 0 ? `${overtimeHours}:${String(overtimeMinutes).padStart(2, '0')}` : `${overtimeHours}`;
       overtimeForecastEl.style.color = '#d93025';
       overtimeAlertEl.style.display = 'block';
       overtimeAlertEl.style.background = '#d93025';
-      overtimeAlertEl.textContent = `🚨 ${overtimeText}時間超過中！`;
+      overtimeAlertEl.textContent = `🚨 ${overtimeHours}時間超過中！`;
     } else if (forecastOvertime > OVERTIME_LIMIT) {
       // 超過見込み
       overtimeForecastEl.style.color = '#ea8600';

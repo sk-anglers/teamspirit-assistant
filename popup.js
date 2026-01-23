@@ -519,11 +519,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (monthlyOvertime > OVERTIME_LIMIT) {
       const overtimeHours = Math.floor(monthlyOvertime / 60);
-      const overtimeMinutes = monthlyOvertime % 60;
-      const overtimeText = overtimeMinutes > 0 ? `${overtimeHours}:${String(overtimeMinutes).padStart(2, '0')}` : `${overtimeHours}`;
       overtimeForecastEl.classList.add('overtime-value', 'danger');
       overtimeAlert.classList.remove('hidden', 'warning');
-      overtimeAlert.textContent = `🚨 ${overtimeText}時間超過中！`;
+      overtimeAlert.textContent = `🚨 ${overtimeHours}時間超過中！`;
       overtimeBadge.classList.add('danger');
       overtimeBadge.textContent = '超過中';
     } else if (forecastOvertime > OVERTIME_LIMIT) {
