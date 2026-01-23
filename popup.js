@@ -317,7 +317,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await initializeTimeDisplay(false);
   }
 
-  // state: 'working' | 'clocked-out' | 'not-working' | null
+  // state: 'working' | 'clocked-out' | 'not-working' | 'loading' | null
   function updateButtonStates(state) {
     if (state === 'working') {
       // Currently working - disable clock in, enable clock out
@@ -332,9 +332,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       clockInBtn.disabled = false;
       clockOutBtn.disabled = true;
     } else {
-      // Unknown state - enable both
-      clockInBtn.disabled = false;
-      clockOutBtn.disabled = false;
+      // Unknown/loading state - disable both for safety
+      clockInBtn.disabled = true;
+      clockOutBtn.disabled = true;
     }
   }
 
