@@ -911,6 +911,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (hasCachedClockIn) {
       // Use cached data
+      const isCurrentlyWorking = !(stored.hasClockedOut && stored.clockOutTimestamp);
       if (stored.hasClockedOut && stored.clockOutTimestamp) {
         showStatus('退勤済み', 'logged-in');
         updateButtonStates('clocked-out');
@@ -923,7 +924,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateTimeDisplay();
       }
       if (stored.workSummary) {
-        displaySummary(stored.workSummary);
+        displaySummary(stored.workSummary, isCurrentlyWorking, stored.clockInTimestamp);
       }
       showMessage('', '');
       return;
@@ -944,7 +945,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         showTimeSection();
         updateTimeDisplay();
         if (fetchResult.summary) {
-          displaySummary(fetchResult.summary);
+          displaySummary(fetchResult.summary, true, fetchResult.clockInTimestamp);
         }
       } else if (fetchResult.hasClockedOut) {
         // User has clocked out today - show final times
@@ -953,7 +954,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         timeSection.classList.remove('hidden');
         updateTimeDisplayFinal(fetchResult.clockInTimestamp, fetchResult.clockOutTimestamp);
         if (fetchResult.summary) {
-          displaySummary(fetchResult.summary);
+          displaySummary(fetchResult.summary, false, null);
         }
       } else {
         // User hasn't clocked in today
@@ -1003,7 +1004,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Display summary data
-  function displaySummary(summary) {
+  // isWorking: true if user is currently working
+  // clockInTimestamp: timestamp of clock-in (for real-time calculation)
+  function displaySummary(summary, isWorking = false, clockInTimestamp = null) {
     if (!summary) {
       hideSummarySection();
       return;
@@ -1011,11 +1014,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Parse time values first
     const scheduledMinutes = parseTimeToMinutes(summary.scheduledHours);
-    const totalMinutes = parseTimeToMinutes(summary.totalHours);
+    let totalMinutes = parseTimeToMinutes(summary.totalHours);
+
+    // Add current working time if user is working (real-time calculation)
+    if (isWorking && clockInTimestamp && totalMinutes !== null) {
+      const currentWorkingMinutes = Math.floor((Date.now() - clockInTimestamp) / 60000);
+      totalMinutes += currentWorkingMinutes;
+    }
 
     // Display basic values
     scheduledHoursEl.textContent = summary.scheduledHours || '--:--';
-    totalHoursEl.textContent = summary.totalHours || '--:--';
+    // Show real-time total hours if working
+    if (isWorking && totalMinutes !== null) {
+      totalHoursEl.textContent = formatMinutesToTime(totalMinutes);
+    } else {
+      totalHoursEl.textContent = summary.totalHours || '--:--';
+    }
 
     // Calculate and display over/under hours (総労働時間 - 所定労働時間)
     if (scheduledMinutes !== null && totalMinutes !== null) {
