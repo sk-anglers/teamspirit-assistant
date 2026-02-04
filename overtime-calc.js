@@ -23,7 +23,10 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
   // = 日次残業の合計 ÷ 退勤打刻済み日数
   // 各日の(勤務時間 - 8時間)を合算した値を使用
   let avgOvertimePerDay;
-  if (totalDailyOvertimeMinutes !== undefined && totalDailyOvertimeMinutes !== null && safeCompletedDays > 0) {
+  if (totalDailyOvertimeMinutes !== undefined &&
+      totalDailyOvertimeMinutes !== null &&
+      !isNaN(totalDailyOvertimeMinutes) &&
+      safeCompletedDays > 0) {
     // 新方式: 日次残業合計 ÷ 勤務日数
     avgOvertimePerDay = Math.round(totalDailyOvertimeMinutes / safeCompletedDays);
   } else {
