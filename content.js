@@ -600,7 +600,18 @@
 
       const clockInDate = parseTimeToDate(data.clockInTime);
       if (clockInDate) {
-        workingTimeEl.textContent = formatDuration(Date.now() - clockInDate.getTime());
+        // 日跨ぎ対応: 出勤時刻が現在時刻より後なら前日として扱う
+        const now = new Date();
+        if (clockInDate > now) {
+          clockInDate.setDate(clockInDate.getDate() - 1);
+        }
+        const workingMs = Date.now() - clockInDate.getTime();
+        // 異常値チェック: マイナスまたは24時間超過は表示しない
+        if (workingMs > 0 && workingMs < 24 * 60 * 60 * 1000) {
+          workingTimeEl.textContent = formatDuration(workingMs);
+        } else {
+          workingTimeEl.textContent = '--:--:--';
+        }
       }
     } else if (data.clockOutTime && data.clockInTime) {
       statusBadge.textContent = '退勤済';
@@ -614,7 +625,17 @@
       const clockInDate = parseTimeToDate(data.clockInTime);
       const clockOutDate = parseTimeToDate(data.clockOutTime);
       if (clockInDate && clockOutDate) {
-        workingTimeEl.textContent = formatDuration(clockOutDate.getTime() - clockInDate.getTime());
+        // 日跨ぎ対応: 退勤時刻が出勤時刻より前なら退勤は翌日として扱う
+        if (clockOutDate < clockInDate) {
+          clockOutDate.setDate(clockOutDate.getDate() + 1);
+        }
+        const workingMs = clockOutDate.getTime() - clockInDate.getTime();
+        // 異常値チェック: マイナスまたは24時間超過は表示しない
+        if (workingMs > 0 && workingMs < 24 * 60 * 60 * 1000) {
+          workingTimeEl.textContent = formatDuration(workingMs);
+        } else {
+          workingTimeEl.textContent = '--:--:--';
+        }
       }
     } else {
       statusBadge.textContent = '未出勤';
@@ -636,20 +657,24 @@
 
       let currentTotalMinutes = totalMinutes || 0;
       let todayWorkingMinutes = 0;
-      if (data.clockInTime && totalMinutes !== null) {
+      // 本日分勤務時間の加算
+      // TeamSpiritのtotalHoursは前日までの累計（本日分を含まない）前提
+      // 出勤中の場合のみ、リアルタイムで本日分を加算する
+      // 退勤済みの場合、TeamSpiritの値に既に本日分が含まれている可能性があるため加算しない
+      if (data.clockInTime && totalMinutes !== null && data.isWorking) {
         const clockInDate = parseTimeToDate(data.clockInTime);
         if (clockInDate) {
-          if (data.isWorking) {
-            // Currently working: add time from clock-in to now
-            todayWorkingMinutes = Math.floor((Date.now() - clockInDate.getTime()) / 60000);
+          // 日跨ぎ対応: 出勤時刻が現在時刻より後なら前日として扱う
+          const now = new Date();
+          if (clockInDate > now) {
+            clockInDate.setDate(clockInDate.getDate() - 1);
+          }
+          // Currently working: add time from clock-in to now
+          todayWorkingMinutes = Math.floor((Date.now() - clockInDate.getTime()) / 60000);
+          // 異常値チェック（24時間超過は異常）
+          const MAX_WORKING_MINUTES = 24 * 60;
+          if (todayWorkingMinutes > 0 && todayWorkingMinutes < MAX_WORKING_MINUTES) {
             currentTotalMinutes += todayWorkingMinutes;
-          } else if (data.clockOutTime) {
-            // Clocked out: add time from clock-in to clock-out
-            const clockOutDate = parseTimeToDate(data.clockOutTime);
-            if (clockOutDate) {
-              todayWorkingMinutes = Math.floor((clockOutDate.getTime() - clockInDate.getTime()) / 60000);
-              currentTotalMinutes += todayWorkingMinutes;
-            }
           }
         }
       }
@@ -667,19 +692,18 @@
       }
 
       const scheduledDays = parseInt(summary.scheduledDays, 10);
-      let actualDays = parseInt(summary.actualDays, 10);
-      // Fix: 今日の勤務があれば actualDays を +1 する
-      // TeamSpirit の actualDays は前日までの累計なので、今日分を加算
-      if (todayWorkingMinutes > 0 || data.isWorking) {
-        actualDays += 1;
-      }
+      const actualDays = parseInt(summary.actualDays, 10);
+      // Note: actualDaysへの+1加工は削除。勤務日数表示にはcompletedDaysを使用する
       // remainingWorkdaysがあればそれを使用、なければ従来の計算
       const remainingWorkdays = parseInt(summary.remainingWorkdays, 10);
       const remainingDays = !isNaN(remainingWorkdays) ? remainingWorkdays : (scheduledDays - actualDays);
 
       // 退勤打刻済み日数と日次残業合計を取得（残業/日の計算に使用）
-      const completedDays = parseInt(summary.completedDays, 10);
-      const totalDailyOvertimeMinutes = parseInt(summary.totalDailyOvertimeMinutes, 10);
+      // NaNチェック: parseIntが失敗した場合は0として扱う
+      const completedDaysRaw = parseInt(summary.completedDays, 10);
+      const completedDays = isNaN(completedDaysRaw) ? 0 : completedDaysRaw;
+      const totalDailyOvertimeRaw = parseInt(summary.totalDailyOvertimeMinutes, 10);
+      const totalDailyOvertimeMinutes = isNaN(totalDailyOvertimeRaw) ? 0 : totalDailyOvertimeRaw;
 
       if (!isNaN(remainingDays)) {
         infoPanel.querySelector('#ts-remaining-days').textContent = `${remainingDays}日`;
@@ -743,8 +767,8 @@
     const overtimeForecastEl = infoPanel.querySelector('#ts-overtime-forecast');
     const overtimeAlertEl = infoPanel.querySelector('#ts-overtime-alert');
 
-    // 勤務日数
-    actualDaysEl.textContent = `${actualDays}日`;
+    // 勤務日数（completedDays = 退勤打刻済み日数を使用）
+    actualDaysEl.textContent = `${completedDays}日`;
 
     // 勤務時間（リアルタイム）
     actualHoursEl.textContent = formatMinutesToTime(currentTotalMinutes);

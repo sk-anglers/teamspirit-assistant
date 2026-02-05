@@ -368,11 +368,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Calculate remaining days (打刻がない所定出勤日をカウント)
     const scheduledDays = parseInt(summary.scheduledDays, 10);
     let actualDays = parseInt(summary.actualDays, 10);
-    // Fix: 今日の勤務があれば actualDays を +1 する（displaySummary と同じ補正）
-    // TeamSpirit の actualDays は前日までの累計なので、今日分を加算
-    if (todayWorkingMinutes > 0) {
-      actualDays += 1;
-    }
+    // 勤務日数は退勤打刻完了日のみカウント
+    // この関数は出勤中のリアルタイム更新用なので、当日は含めない
     // remainingWorkdaysがあればそれを使用、なければ従来の計算
     const remainingWorkdays = parseInt(summary.remainingWorkdays, 10);
     const remainingDays = !isNaN(remainingWorkdays) ? remainingWorkdays : (scheduledDays - actualDays);
@@ -424,8 +421,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   function updateOvertimeSectionRealTime(totalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes) {
     const data = calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes);
 
-    // 勤務日数
-    actualDaysEl.textContent = `${actualDays}日`;
+    // 勤務日数（completedDays: 退勤打刻済み日数を使用）
+    const displayDays = (!isNaN(completedDays) && completedDays > 0) ? completedDays : 0;
+    actualDaysEl.textContent = `${displayDays}日`;
 
     // 勤務時間（リアルタイム）
     actualHoursEl.textContent = formatMinutesToTime(totalMinutes);
@@ -729,14 +727,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Calculate remaining days (打刻がない所定出勤日をカウント)
     const scheduledDays = parseInt(summary.scheduledDays, 10);
-    let actualDays = parseInt(summary.actualDays, 10);
-    // Fix: 今日の勤務を判定して actualDays を +1 する
-    // TeamSpirit の actualDays は前日までの累計なので、今日分を加算
-    // todayWorkingMinutes > 0: clockInTimestamp から計算できた場合
-    // isWorking: 出勤中フラグが立っている場合（clockInTimestamp 取得失敗時のフォールバック）
-    if (todayWorkingMinutes > 0 || isWorking) {
-      actualDays += 1;
-    }
+    const actualDays = parseInt(summary.actualDays, 10);
+    // actualDaysはTeamSpiritの値をそのまま使用（加工しない）
+    // 勤務日数の表示にはcompletedDays（退勤済み日数）を使用する
     // remainingWorkdaysがあればそれを使用、なければ従来の計算
     const remainingWorkdays = parseInt(summary.remainingWorkdays, 10);
     let remainingDays = !isNaN(remainingWorkdays) ? remainingWorkdays : (scheduledDays - actualDays);
@@ -798,8 +791,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const data = calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes);
 
-    // 勤務日数
-    actualDaysEl.textContent = `${actualDays}日`;
+    // 勤務日数（completedDays: 退勤打刻済み日数を使用）
+    const displayDays = (!isNaN(completedDays) && completedDays > 0) ? completedDays : 0;
+    actualDaysEl.textContent = `${displayDays}日`;
 
     // 勤務時間
     actualHoursEl.textContent = formatMinutesToTime(totalMinutes);

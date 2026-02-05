@@ -141,6 +141,18 @@ async function fetchAllAttendanceDataInternal() {
     tempTab = await chrome.tabs.create({ url: CONFIG.TEAMSPIRIT_ATTENDANCE_URL, active: false });
     await waitForTabLoad(tempTab.id);
 
+    // 認証エラー検出: ログインページにリダイレクトされた場合
+    try {
+      const tab = await chrome.tabs.get(tempTab.id);
+      if (tab.url && (tab.url.includes('login') || tab.url.includes('Login') || tab.url.includes('/secur/'))) {
+        console.log('[TS-Assistant] セッション切れを検出:', tab.url);
+        await chrome.tabs.remove(tempTab.id);
+        return { success: false, error: 'SESSION_EXPIRED', message: 'セッションが切れました。再ログインしてください' };
+      }
+    } catch (e) {
+      console.warn('[TS-Assistant] タブURL確認エラー:', e);
+    }
+
     // ポーリング方式: DOM要素の出現を500ms間隔で確認（最大60秒）
     const pollStartTime = Date.now();
     const POLL_INTERVAL = 500;
@@ -221,7 +233,11 @@ async function fetchAllAttendanceDataInternal() {
 
               const row = clockInEl.closest('tr');
               if (row) {
-                const clockOutEl = row.querySelector('td.vet, td.dval.vet');
+                // 退勤時刻セレクタ（フォールバック付き）
+                const clockOutEl = row.querySelector('td.vet, td.dval.vet, td[data-field="endTime"], td.endTime');
+                if (!clockOutEl) {
+                  console.warn('[TS-Assistant] 退勤時刻セレクタが見つかりません:', dateStr);
+                }
                 if (clockOutEl) {
                   const outText = clockOutEl.textContent?.trim();
                   if (outText && outText !== '' && outText !== '--:--') {
@@ -308,13 +324,30 @@ async function fetchAllAttendanceDataInternal() {
 
               // 勤務時間を計算（clockOut - clockIn - 休憩）
               const parseTime = (timeStr) => {
+                // 入力検証: 空文字・null・不正形式をチェック
+                if (!timeStr || !/^\d{1,2}:\d{2}$/.test(timeStr)) return null;
                 const parts = timeStr.split(':');
-                return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+                const hours = parseInt(parts[0], 10);
+                const minutes = parseInt(parts[1], 10);
+                if (isNaN(hours) || isNaN(minutes)) return null;
+                return hours * 60 + minutes;
               };
               const clockInMinutes = parseTime(day.clockIn);
               const clockOutMinutes = parseTime(day.clockOut);
+
+              // パース失敗時はこの日をスキップ
+              if (clockInMinutes === null || clockOutMinutes === null) {
+                console.warn('[TS-Assistant] 時刻パース失敗:', dateStr, day.clockIn, day.clockOut);
+                continue;
+              }
+
               // 実勤務時間 = 退勤 - 出勤 - 休憩（6時間以上の場合）
               let workingMinutes = clockOutMinutes - clockInMinutes;
+              // 日跨ぎ対応: 退勤時刻が出勤時刻より小さい場合は翌日として扱う
+              // 例: 22:00出勤→翌02:00退勤
+              if (workingMinutes < 0) {
+                workingMinutes += 24 * 60; // 1440分を加算
+              }
               if (workingMinutes >= 6 * 60) {
                 workingMinutes -= BREAK_MINUTES;
               }

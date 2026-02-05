@@ -53,18 +53,37 @@ async function fetchClockInTimeFromSite() {
     if (data.clockInTime) {
       const parts = data.clockInTime.split(':');
       if (parts.length >= 2) {
-        const d = new Date();
-        d.setHours(parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
-        clockInTimestamp = d.getTime();
+        const hours = parseInt(parts[0], 10);
+        const minutes = parseInt(parts[1], 10);
+        // パース失敗時のガード
+        if (!isNaN(hours) && !isNaN(minutes)) {
+          const d = new Date();
+          d.setHours(hours, minutes, 0, 0);
+          // 日跨ぎ対応: 出勤時刻が現在より未来なら前日として扱う
+          // 例: 0:30に前日23:00の出勤データを取得した場合
+          if (d.getTime() > Date.now()) {
+            d.setDate(d.getDate() - 1);
+          }
+          clockInTimestamp = d.getTime();
+        }
       }
     }
 
     if (data.clockOutTime) {
       const parts = data.clockOutTime.split(':');
       if (parts.length >= 2) {
-        const d = new Date();
-        d.setHours(parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
-        clockOutTimestamp = d.getTime();
+        const hours = parseInt(parts[0], 10);
+        const minutes = parseInt(parts[1], 10);
+        // パース失敗時のガード
+        if (!isNaN(hours) && !isNaN(minutes)) {
+          const d = new Date();
+          d.setHours(hours, minutes, 0, 0);
+          // 日跨ぎ対応: 退勤時刻が現在より未来なら前日として扱う
+          if (d.getTime() > Date.now()) {
+            d.setDate(d.getDate() - 1);
+          }
+          clockOutTimestamp = d.getTime();
+        }
       }
     }
 
