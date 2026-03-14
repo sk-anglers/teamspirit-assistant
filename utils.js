@@ -62,8 +62,25 @@ function parseTimeToDate(timeStr) {
   if (parts.length < 2) return null;
   const hours = parseInt(parts[0], 10);
   const minutes = parseInt(parts[1], 10);
-  if (isNaN(hours) || isNaN(minutes)) return null;
+  if (isNaN(hours) || isNaN(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
   const date = new Date();
   date.setHours(hours, minutes, 0, 0);
   return date;
+}
+
+// 時刻文字列 "HH:MM" → タイムスタンプ（日跨ぎ補正付き）
+// 12時間以上未来の時刻は前日として補正
+function parseTimeToTimestamp(timeStr) {
+  if (!timeStr || timeStr === '--:--') return null;
+  const parts = timeStr.split(':');
+  if (parts.length < 2) return null;
+  const hours = parseInt(parts[0], 10);
+  const minutes = parseInt(parts[1], 10);
+  if (isNaN(hours) || isNaN(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  const d = new Date();
+  d.setHours(hours, minutes, 0, 0);
+  if (d.getTime() - Date.now() > CONFIG.HALF_DAY_MS) {
+    d.setDate(d.getDate() - 1);
+  }
+  return d.getTime();
 }

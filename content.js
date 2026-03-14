@@ -602,16 +602,12 @@
       targetRow.style.display = 'flex';
       clockInEl.textContent = data.clockInTime;
 
-      const clockInDate = parseTimeToDate(data.clockInTime);
-      if (clockInDate) {
-        // 日跨ぎ対応: 出勤時刻が現在時刻より後なら前日として扱う
-        const now = new Date();
-        if (clockInDate > now) {
-          clockInDate.setDate(clockInDate.getDate() - 1);
-        }
-        const workingMs = Date.now() - clockInDate.getTime();
+      // 日跨ぎ補正: 統一関数 parseTimeToTimestamp を使用（#5）
+      const clockInTs = parseTimeToTimestamp(data.clockInTime);
+      if (clockInTs) {
+        const workingMs = Date.now() - clockInTs;
         // 異常値チェック: マイナスまたは24時間超過は表示しない
-        if (workingMs > 0 && workingMs < 24 * 60 * 60 * 1000) {
+        if (workingMs > 0 && workingMs < CONFIG.TWENTY_FOUR_HOURS_MS) {
           workingTimeEl.textContent = formatDuration(workingMs);
         } else {
           workingTimeEl.textContent = '--:--:--';
@@ -635,7 +631,7 @@
         }
         const workingMs = clockOutDate.getTime() - clockInDate.getTime();
         // 異常値チェック: マイナスまたは24時間超過は表示しない
-        if (workingMs > 0 && workingMs < 24 * 60 * 60 * 1000) {
+        if (workingMs > 0 && workingMs < CONFIG.TWENTY_FOUR_HOURS_MS) {
           workingTimeEl.textContent = formatDuration(workingMs);
         } else {
           workingTimeEl.textContent = '--:--:--';
@@ -664,18 +660,13 @@
       // 本日分勤務時間の加算
       // TeamSpiritのtotalHoursは退勤後に当日分を含む値を返す
       // 出勤中のみ本日分を加算（退勤済みは既にtotalHoursに含まれるため加算不要）
-      const MAX_WORKING_MINUTES = 24 * 60;
       if (data.clockInTime && totalMinutes !== null) {
         if (data.isWorking) {
-          // 出勤中: 出勤時刻〜現在のリアルタイム計算
-          const clockInDate = parseTimeToDate(data.clockInTime);
-          if (clockInDate) {
-            const now = new Date();
-            if (clockInDate > now) {
-              clockInDate.setDate(clockInDate.getDate() - 1);
-            }
-            todayWorkingMinutes = Math.floor((Date.now() - clockInDate.getTime()) / 60000);
-            if (todayWorkingMinutes > 0 && todayWorkingMinutes < MAX_WORKING_MINUTES) {
+          // 出勤中: 出勤時刻〜現在のリアルタイム計算（統一関数使用 #5）
+          const clockInTs2 = parseTimeToTimestamp(data.clockInTime);
+          if (clockInTs2) {
+            todayWorkingMinutes = Math.floor((Date.now() - clockInTs2) / 60000);
+            if (todayWorkingMinutes > 0 && todayWorkingMinutes < CONFIG.MAX_WORKING_MINUTES_PER_DAY) {
               // 休憩控除: 6時間以上勤務の場合は1時間控除して totalMinutes に加算
               let todayNetMinutes = todayWorkingMinutes;
               if (todayNetMinutes >= 6 * 60) {
@@ -698,6 +689,10 @@
         }
       }
 
+      // 休日出勤時間を取得（法的残業・過不足から除外するため）
+      const holidayWorkMinutesRaw = parseInt(summary.holidayWorkMinutes, 10);
+      const holidayWorkMinutes = isNaN(holidayWorkMinutesRaw) ? 0 : holidayWorkMinutesRaw;
+
       if (totalMinutes !== null) {
         totalHoursEl.textContent = formatMinutesToTime(currentTotalMinutes);
       } else {
@@ -705,7 +700,8 @@
       }
 
       if (scheduledMinutes !== null && totalMinutes !== null) {
-        const overUnderMinutes = currentTotalMinutes - scheduledMinutes;
+        // 休日出勤は所定外のため除外
+        const overUnderMinutes = (currentTotalMinutes - holidayWorkMinutes) - scheduledMinutes;
         overUnderEl.textContent = overUnderMinutes >= 0 ? `+${formatMinutesToTime(overUnderMinutes)}` : formatMinutesToTime(overUnderMinutes);
         overUnderEl.style.color = overUnderMinutes >= 0 ? '#0d904f' : '#d93025';
       }
@@ -749,7 +745,7 @@
       }
 
       // 残業警告セクション更新
-      updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes);
+      updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes);
     } else {
       summarySection.style.display = 'none';
       // サマリーがない場合は残業セクションも非表示
@@ -759,7 +755,7 @@
   }
 
   // 残業警告セクションの更新 (uses shared calculateOvertimeData)
-  function updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes) {
+  function updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes) {
     if (!infoPanel) return;
 
     const overtimeSection = infoPanel.querySelector('#ts-overtime-section');
@@ -774,7 +770,7 @@
 
     overtimeSection.style.display = 'block';
 
-    const data = calculateOvertimeData(currentTotalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes);
+    const data = calculateOvertimeData(currentTotalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes);
 
     // 各要素を取得
     const actualDaysEl = infoPanel.querySelector('#ts-actual-days');
@@ -789,8 +785,8 @@
     // 勤務日数（当日含むリアルタイム値を使用）
     actualDaysEl.textContent = `${data.realTimeCompletedDays}日`;
 
-    // 勤務時間（リアルタイム）
-    actualHoursEl.textContent = formatMinutesToTime(currentTotalMinutes);
+    // 勤務時間（休日出勤除外した平日分、リアルタイム）
+    actualHoursEl.textContent = formatMinutesToTime(data.workdayTotalMinutes);
 
     // 平均/日
     avgHoursPerDayEl.textContent = formatMinutesToTime(data.avgMinutesPerDay);
@@ -860,7 +856,7 @@
         chrome.storage.local.get(['clockInTimestamp', 'hasClockedOut'], (stored) => {
           if (stored.clockInTimestamp && !stored.hasClockedOut) {
             const elapsed = Date.now() - stored.clockInTimestamp;
-            if (elapsed > 0 && elapsed < 24 * 60 * 60 * 1000) {
+            if (elapsed > 0 && elapsed < CONFIG.TWENTY_FOUR_HOURS_MS) {
               if (cachedData && !cachedData.clockInTime) {
                 const clockInDate = new Date(stored.clockInTimestamp);
                 cachedData.isWorking = true;
@@ -1081,6 +1077,19 @@
     });
   }
   // iframeでは何もしない（メインフレームで処理）
+
+  // (#4) INVALIDATE_CONTENT_CACHE メッセージ受信: キャッシュ無効化してデータ再取得
+  try {
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+      if (request.type === 'INVALIDATE_CONTENT_CACHE') {
+        console.log('[TS-Assistant] content.js キャッシュ無効化');
+        cachedData = null;
+        loadData().then(() => updateDisplay());
+        sendResponse({ success: true });
+        return true;
+      }
+    });
+  } catch (e) {}
 
   // ストレージ変更監視
   try {

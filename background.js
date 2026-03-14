@@ -82,7 +82,7 @@ function waitForTabLoad(tabId) {
       chrome.tabs.onUpdated.removeListener(listener);
       console.log('[TS-Assistant] waitForTabLoad タイムアウト（60秒）');
       resolve();
-    }, 60000);
+    }, CONFIG.TAB_LOAD_TIMEOUT_MS);
 
     function listener(id, changeInfo) {
       if (id === tabId && changeInfo.status === 'complete') {
@@ -95,42 +95,49 @@ function waitForTabLoad(tabId) {
   });
 }
 
-// Fetch attendance data from TeamSpirit (uses unified fetch)
-async function fetchAttendanceData() {
-  // 統合フェッチを使用
-  const allData = await fetchAllAttendanceData();
-  return allData?.todayData || null;
-}
-
 // ==================== 統合データ取得 ====================
 // 全てのデータを1つのタブで取得
 let allDataCache = null;
 let allDataCacheTime = 0;
-const ALL_DATA_CACHE_TTL = 30 * 1000; // 30秒
 let allDataFetchPromise = null;
 
 async function fetchAllAttendanceData() {
   // 日付変更チェック: キャッシュが前日のデータなら無効化
+  // Service Worker再起動時も対応: storage に lastAccessDate を記録
+  const now = new Date();
+  const todayDateStr = getTodayDateStr();
+
   if (allDataCache && allDataCacheTime > 0) {
     const cacheDate = new Date(allDataCacheTime);
-    const now = new Date();
     if (cacheDate.getDate() !== now.getDate() ||
         cacheDate.getMonth() !== now.getMonth() ||
         cacheDate.getFullYear() !== now.getFullYear()) {
       console.log('[TS-Assistant] 日付変更を検出、キャッシュを無効化');
       allDataCache = null;
       allDataCacheTime = 0;
-      // ストレージの古いデータもクリア
       await chrome.storage.local.remove([
         'attendanceData', 'lastFetched', 'clockInTimestamp',
         'clockOutTimestamp', 'hasClockedOut', 'workSummary',
         'lastPunchTime', 'lastPunchAction'
       ]);
     }
+  } else {
+    // Service Worker再起動後: メモリキャッシュがないため storage の日付をチェック (#6)
+    const stored = await chrome.storage.local.get(['lastAccessDate', 'lastFetched']);
+    if (stored.lastAccessDate && stored.lastAccessDate !== todayDateStr) {
+      console.log('[TS-Assistant] SW再起動後の日付変更を検出、storageクリア');
+      await chrome.storage.local.remove([
+        'attendanceData', 'lastFetched', 'clockInTimestamp',
+        'clockOutTimestamp', 'hasClockedOut', 'workSummary',
+        'lastPunchTime', 'lastPunchAction', 'lastAccessDate'
+      ]);
+    }
   }
+  // 最終アクセス日を記録
+  await chrome.storage.local.set({ lastAccessDate: todayDateStr });
 
   // キャッシュが有効な場合はそれを返す
-  if (allDataCache && (Date.now() - allDataCacheTime) < ALL_DATA_CACHE_TTL) {
+  if (allDataCache && (Date.now() - allDataCacheTime) < CONFIG.CACHE_TTL_MS) {
     console.log('[TS-Assistant] 全データをキャッシュから取得');
     return allDataCache;
   }
@@ -174,8 +181,8 @@ async function fetchAllAttendanceDataInternal() {
 
     // ポーリング方式: DOM要素の出現を500ms間隔で確認（最大60秒）
     const pollStartTime = Date.now();
-    const POLL_INTERVAL = 500;
-    const POLL_TIMEOUT = 60000;
+    const POLL_INTERVAL = CONFIG.POLL_INTERVAL_MS;
+    const POLL_TIMEOUT = CONFIG.TAB_LOAD_TIMEOUT_MS;
     let dataReady = false;
 
     while (Date.now() - pollStartTime < POLL_TIMEOUT) {
@@ -349,7 +356,7 @@ async function fetchAllAttendanceDataInternal() {
                 const parts = timeStr.split(':');
                 const hours = parseInt(parts[0], 10);
                 const minutes = parseInt(parts[1], 10);
-                if (isNaN(hours) || isNaN(minutes)) return null;
+                if (isNaN(hours) || isNaN(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
                 return hours * 60 + minutes;
               };
               const clockInMinutes = parseTime(day.clockIn);
@@ -419,8 +426,7 @@ async function fetchAllAttendanceDataInternal() {
           const stored = await chrome.storage.local.get(['clockInTimestamp', 'hasClockedOut']);
           if (stored.clockInTimestamp && !stored.hasClockedOut) {
             const elapsed = Date.now() - stored.clockInTimestamp;
-            const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
-            if (elapsed > 0 && elapsed < TWENTY_FOUR_HOURS) {
+            if (elapsed > 0 && elapsed < CONFIG.TWENTY_FOUR_HOURS_MS) {
               // clockInTimestamp から前日の日付文字列を生成
               const yesterdayDate = new Date(stored.clockInTimestamp);
               const yesterdayStr = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, '0')}-${String(yesterdayDate.getDate()).padStart(2, '0')}`;
@@ -434,41 +440,17 @@ async function fetchAllAttendanceDataInternal() {
           }
         }
 
-        let clockInTimestamp = null;
-        let clockOutTimestamp = null;
-
-        // todayDataにtimestampを追加
-        // 日跨ぎ判定閾値: 12時間以上未来の時刻のみ前日として扱う
-        // （早朝の数分差を誤補正しない。例: 0:10を0:05に見ても前日にならない）
-        const HALF_DAY_MS = 12 * 60 * 60 * 1000;
-
-        if (data.todayData?.clockInTime) {
-          const parts = data.todayData.clockInTime.split(':');
-          if (parts.length >= 2) {
-            const d = new Date();
-            d.setHours(parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
-            if (d.getTime() - Date.now() > HALF_DAY_MS) {
-              d.setDate(d.getDate() - 1);
-            }
-            clockInTimestamp = d.getTime();
-          }
-        }
-
-        if (data.todayData?.clockOutTime) {
-          const parts = data.todayData.clockOutTime.split(':');
-          if (parts.length >= 2) {
-            const d = new Date();
-            d.setHours(parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
-            if (d.getTime() - Date.now() > HALF_DAY_MS) {
-              d.setDate(d.getDate() - 1);
-            }
-            clockOutTimestamp = d.getTime();
-          }
-        }
+        // todayDataにtimestampを追加（統一関数 parseTimeToTimestamp を使用）
+        let clockInTimestamp = data.todayData?.clockInTime
+          ? parseTimeToTimestamp(data.todayData.clockInTime)
+          : null;
+        let clockOutTimestamp = data.todayData?.clockOutTime
+          ? parseTimeToTimestamp(data.todayData.clockOutTime)
+          : null;
 
         // 26時方式: 退勤が出勤より前なら翌日として扱う（夜勤の日跨ぎ対応）
         if (clockInTimestamp && clockOutTimestamp && clockOutTimestamp < clockInTimestamp) {
-          clockOutTimestamp += 24 * 60 * 60 * 1000;
+          clockOutTimestamp += CONFIG.TWENTY_FOUR_HOURS_MS;
         }
 
         // remainingWorkdays, completedDays, totalDailyOvertimeMinutesをsummaryに追加
@@ -490,14 +472,16 @@ async function fetchAllAttendanceDataInternal() {
 
         // Save to unified storage
         // punch.js が設定した状態を保護する（アクションベース + 時間ベースの二重保護）
-        const existing = await chrome.storage.local.get(['clockInTimestamp', 'clockOutTimestamp', 'lastPunchTime', 'lastPunchAction']);
+        const existing = await chrome.storage.local.get(['clockInTimestamp', 'clockOutTimestamp', 'lastPunchTime', 'lastPunchAction', 'hasClockedOut']);
         // 直近の打刻操作（60秒以内）: タイムスタンプの精度保護
-        const recentPunch = existing.lastPunchTime && (Date.now() - existing.lastPunchTime < 60000);
-        // 最後の打刻が出勤: 再出勤後の状態巻き戻し防止
-        // 24時間有効期限: Service Worker再起動で日境界クリーンアップがスキップされた場合のフォールバック
+        const recentPunch = existing.lastPunchTime && (Date.now() - existing.lastPunchTime < CONFIG.RECENT_PUNCH_THRESHOLD_MS);
+        // 最後の打刻アクション（24時間有効期限）
         const lastActionIsClockIn = existing.lastPunchAction === 'clockIn'
           && existing.lastPunchTime
-          && (Date.now() - existing.lastPunchTime < 24 * 60 * 60 * 1000);
+          && (Date.now() - existing.lastPunchTime < CONFIG.TWENTY_FOUR_HOURS_MS);
+        const lastActionIsClockOut = existing.lastPunchAction === 'clockOut'
+          && existing.lastPunchTime
+          && (Date.now() - existing.lastPunchTime < CONFIG.TWENTY_FOUR_HOURS_MS);
 
         const storageUpdate = {
           attendanceData: data.todayData,
@@ -506,13 +490,19 @@ async function fetchAllAttendanceDataInternal() {
         };
 
         // hasClockedOut: 出勤打刻後はAPIの退勤時刻が打刻後の新しいものの場合のみ反映
-        // （再出勤後に旧退勤時刻で巻き戻されるのを防止）
+        // (#3) 必ず明示的に true/false を設定し、undefined を防止
         const apiHasClockedOut = !!data.todayData?.clockOutTime;
         if (lastActionIsClockIn) {
-          // APIの退勤時刻が出勤打刻より後の場合のみ反映（WebサイトやAPIでの退勤を検知）
           if (apiHasClockedOut && clockOutTimestamp && clockOutTimestamp > existing.lastPunchTime) {
             storageUpdate.hasClockedOut = true;
+            storageUpdate.clockOutTimestamp = clockOutTimestamp;
+          } else {
+            // 出勤打刻後でAPIがまだ退勤を返さない → 明示的に false を維持
+            storageUpdate.hasClockedOut = false;
           }
+        } else if (lastActionIsClockOut && recentPunch) {
+          // (#2) 退勤打刻直後（60秒以内）: punch.jsの設定を保護、上書きしない
+          // hasClockedOut と clockOutTimestamp はそのまま維持
         } else if (!recentPunch) {
           storageUpdate.hasClockedOut = apiHasClockedOut;
         }
@@ -520,7 +510,6 @@ async function fetchAllAttendanceDataInternal() {
         // clockInTimestamp: 出勤打刻後はpunch.jsの精度の高いタイムスタンプを保護
         if (lastActionIsClockIn) {
           // punch.js が設定した Date.now() 精度のタイムスタンプを保護
-          // （APIは分単位精度のため上書きしない）
         } else if (!recentPunch && clockInTimestamp) {
           storageUpdate.clockInTimestamp = clockInTimestamp;
         } else if (!existing.clockInTimestamp && clockInTimestamp) {
@@ -528,14 +517,17 @@ async function fetchAllAttendanceDataInternal() {
         }
 
         // clockOutTimestamp: 出勤打刻後はAPIの退勤時刻が打刻後の新しいものの場合のみ反映
+        // (#2) 退勤打刻直後は上記で保護済み
         if (lastActionIsClockIn) {
           if (clockOutTimestamp && clockOutTimestamp > existing.lastPunchTime) {
             storageUpdate.clockOutTimestamp = clockOutTimestamp;
           }
-        } else if (!recentPunch && clockOutTimestamp) {
-          storageUpdate.clockOutTimestamp = clockOutTimestamp;
-        } else if (!existing.clockOutTimestamp && clockOutTimestamp) {
-          storageUpdate.clockOutTimestamp = clockOutTimestamp;
+        } else if (!lastActionIsClockOut || !recentPunch) {
+          if (!recentPunch && clockOutTimestamp) {
+            storageUpdate.clockOutTimestamp = clockOutTimestamp;
+          } else if (!existing.clockOutTimestamp && clockOutTimestamp) {
+            storageUpdate.clockOutTimestamp = clockOutTimestamp;
+          }
         }
 
         await chrome.storage.local.set(storageUpdate);
@@ -677,8 +669,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // Handle fetch request from content script
   if (request.type === 'FETCH_ATTENDANCE_DATA') {
-    fetchAttendanceData().then(data => {
+    fetchAllAttendanceData().then(allData => {
+      const data = allData?.todayData || null;
       sendResponse({ success: !!data, data });
+    }).catch(error => {
+      console.error('[TS-Assistant] FETCH_ATTENDANCE_DATA エラー:', error);
+      sendResponse({ success: false, data: null });
     });
     return true; // Keep channel open for async response
   }
@@ -700,10 +696,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   // Handle cache invalidation request (after punch)
+  // (#9) キャッシュ無効化完了を確実に通知
   if (request.type === 'INVALIDATE_CACHE') {
     console.log('[TS-Assistant] キャッシュを無効化');
     allDataCache = null;
     allDataCacheTime = 0;
+    // content.js にもキャッシュ無効化を通知（#4）
+    chrome.tabs.query({}, (tabs) => {
+      for (const tab of tabs) {
+        try {
+          chrome.tabs.sendMessage(tab.id, { type: 'INVALIDATE_CONTENT_CACHE' }).catch(() => {});
+        } catch (e) { /* タブがcontent scriptを持たない場合は無視 */ }
+      }
+    });
     sendResponse({ success: true });
     return true;
   }

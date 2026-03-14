@@ -4,12 +4,17 @@
 
 // Calculate all overtime-related data
 // Returns an object with all computed values for DOM rendering
-// completedDays: 退勤打刻済み日数（オプショナル）
-// totalDailyOvertimeMinutes: 日次残業の合計（各日の(勤務時間-8時間)を合算）
-function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes) {
+// completedDays: 退勤打刻済み日数（当日除く）
+// totalDailyOvertimeMinutes: 日次残業の合計（各日の(勤務時間-8時間)を合算、当日除く）
+// holidayWorkMinutes: 休日出勤時間（分）。法的残業・過不足から除外するために使用
+function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes) {
   const STANDARD_HOURS_PER_DAY = CONFIG.STANDARD_HOURS_PER_DAY;
   const OVERTIME_LIMIT = CONFIG.OVERTIME_LIMIT;
-  const BREAK_MINUTES = 60; // 休憩1時間
+  const BREAK_MINUTES = CONFIG.BREAK_MINUTES;
+
+  // 休日出勤を除外した平日勤務時間（法的計算用）
+  const safeHolidayWorkMinutes = (holidayWorkMinutes && !isNaN(holidayWorkMinutes)) ? holidayWorkMinutes : 0;
+  const workdayTotalMinutes = totalMinutes - safeHolidayWorkMinutes;
 
   // actualDaysが0の場合は1として扱う（0除算防止、月初め対応）
   const safeActualDays = actualDays > 0 ? actualDays : 1;
@@ -38,8 +43,8 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
   // 退勤打刻済み日数（当日含む、0除算防止）
   const safeCompletedDays = realTimeCompletedDays > 0 ? realTimeCompletedDays : safeActualDays;
 
-  // 平均/日（確定分 + 当日分、退勤打刻済み日数で計算）
-  const avgMinutesPerDay = Math.round(totalMinutes / safeCompletedDays);
+  // 平均/日（休日出勤を除外した平日勤務時間 ÷ 勤務日数）
+  const avgMinutesPerDay = Math.round(workdayTotalMinutes / safeCompletedDays);
 
   // 残業/日の計算（当日分を含むリアルタイム計算）
   // = 日次残業の合計（当日含む） ÷ 勤務日数（当日含む）
@@ -68,10 +73,11 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
   // リアルタイム: 当日の超過分（todayExcess）を含む
   const dailyExcessTotal = realTimeDailyOvertimeMinutes;
 
-  // 月間残業（法的）= max(0, 総勤務時間 - 月間所定労働時間)
+  // 月間残業（法的）= max(0, 平日勤務時間 - 月間所定労働時間)
+  // 休日出勤は36協定の45h上限対象外のため除外
   // 所定未満の場合は0（マイナス表示しない）
   const legalOvertime = scheduledMinutes
-    ? Math.max(0, totalMinutes - scheduledMinutes)
+    ? Math.max(0, workdayTotalMinutes - scheduledMinutes)
     : 0;
 
   // 月間残業（法的）の警告レベル
@@ -140,7 +146,7 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
     avgMinutesPerDay,
     avgOvertimePerDay,
     avgOvertimeLevel,
-    // 月間残業（法的）
+    // 月間残業（法的）- 休日出勤除外
     legalOvertime,
     legalOvertimeLevel,
     legalOvertimeHours,
@@ -154,9 +160,7 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
     badgeText,
     // 勤務日数（当日含むリアルタイム値）
     realTimeCompletedDays,
-    // 後方互換性のため残す
-    monthlyOvertime: legalOvertime,
-    monthlyOvertimeLevel: legalOvertimeLevel,
-    overtimeHours: legalOvertimeHours
+    // 平日勤務時間（休日出勤除外）
+    workdayTotalMinutes
   };
 }

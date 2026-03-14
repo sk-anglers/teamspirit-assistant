@@ -17,7 +17,7 @@ function isCurrentWorkSession(timestamp) {
   if (isToday(timestamp)) return true;
   // 深夜勤務対応: 24時間以内のタイムスタンプは有効とみなす
   const elapsed = Date.now() - timestamp;
-  return elapsed > 0 && elapsed < 24 * 60 * 60 * 1000;
+  return elapsed > 0 && elapsed < CONFIG.TWENTY_FOUR_HOURS_MS;
 }
 
 // Save clock-in timestamp (called when punching in via extension)
@@ -57,50 +57,13 @@ async function fetchClockInTimeFromSite() {
     console.log('Got data from background:', data);
 
     // Data is already saved by background.js, just return the formatted result
-    let clockInTimestamp = null;
-    let clockOutTimestamp = null;
-
-    // 日跨ぎ判定閾値: 12時間以上未来の時刻のみ前日として扱う
-    // （早朝の数分差を誤補正しない。例: 0:10を0:05に見ても前日にならない）
-    const HALF_DAY_MS = 12 * 60 * 60 * 1000;
-
-    if (data.clockInTime) {
-      const parts = data.clockInTime.split(':');
-      if (parts.length >= 2) {
-        const hours = parseInt(parts[0], 10);
-        const minutes = parseInt(parts[1], 10);
-        // パース失敗時のガード
-        if (!isNaN(hours) && !isNaN(minutes)) {
-          const d = new Date();
-          d.setHours(hours, minutes, 0, 0);
-          if (d.getTime() - Date.now() > HALF_DAY_MS) {
-            d.setDate(d.getDate() - 1);
-          }
-          clockInTimestamp = d.getTime();
-        }
-      }
-    }
-
-    if (data.clockOutTime) {
-      const parts = data.clockOutTime.split(':');
-      if (parts.length >= 2) {
-        const hours = parseInt(parts[0], 10);
-        const minutes = parseInt(parts[1], 10);
-        // パース失敗時のガード
-        if (!isNaN(hours) && !isNaN(minutes)) {
-          const d = new Date();
-          d.setHours(hours, minutes, 0, 0);
-          if (d.getTime() - Date.now() > HALF_DAY_MS) {
-            d.setDate(d.getDate() - 1);
-          }
-          clockOutTimestamp = d.getTime();
-        }
-      }
-    }
+    // 統一関数 parseTimeToTimestamp を使用（#5 日跨ぎ補正ロジック統一）
+    let clockInTimestamp = data.clockInTime ? parseTimeToTimestamp(data.clockInTime) : null;
+    let clockOutTimestamp = data.clockOutTime ? parseTimeToTimestamp(data.clockOutTime) : null;
 
     // 26時方式: 退勤が出勤より前なら翌日として扱う（夜勤の日跨ぎ対応）
     if (clockInTimestamp && clockOutTimestamp && clockOutTimestamp < clockInTimestamp) {
-      clockOutTimestamp += 24 * 60 * 60 * 1000;
+      clockOutTimestamp += CONFIG.TWENTY_FOUR_HOURS_MS;
     }
 
     return {
