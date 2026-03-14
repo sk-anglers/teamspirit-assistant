@@ -271,8 +271,12 @@ async function fetchAllAttendanceDataInternal() {
                     dayData.clockOut = outText;
                   }
                 }
-                // 行のクラスで休日判定（土日・祝日）
+                // 休日判定: rowcntクラス OR vstatus title="休日出勤"
                 if ((row.className || '').includes('rowcnt')) {
+                  dayData.isHoliday = true;
+                }
+                const vstatusEl = row.querySelector('td.vstatus');
+                if (vstatusEl && (vstatusEl.title || '').includes('休日')) {
                   dayData.isHoliday = true;
                 }
               }
