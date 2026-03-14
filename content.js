@@ -887,7 +887,50 @@
     }
 
   }
-  // iframeでは何もしない（メインフレームで処理）
+
+  // 全フレーム共通: TeamSpiritネイティブ打刻ボタンの監視
+  // ユーザーが拡張機能経由ではなく直接ボタンを押した場合に検知
+  function watchNativePunchButtons() {
+    const clockInBtn = document.getElementById('btnStInput');
+    const clockOutBtn = document.getElementById('btnEtInput');
+
+    if (clockInBtn) {
+      clockInBtn.addEventListener('click', () => {
+        if (clockInBtn.disabled) return;
+        setTimeout(() => {
+          if (!isExtensionContextValid()) return;
+          chrome.storage.local.set({
+            clockInTimestamp: Date.now(),
+            hasClockedOut: false,
+            lastPunchTime: Date.now(),
+            lastPunchAction: 'clockIn'
+          });
+          chrome.storage.local.remove(['clockOutTimestamp']);
+        }, 1500);
+      });
+    }
+
+    if (clockOutBtn) {
+      clockOutBtn.addEventListener('click', () => {
+        if (clockOutBtn.disabled) return;
+        setTimeout(() => {
+          if (!isExtensionContextValid()) return;
+          const now = Date.now();
+          chrome.storage.local.set({
+            hasClockedOut: true,
+            clockOutTimestamp: now,
+            lastPunchTime: now,
+            lastPunchAction: 'clockOut'
+          });
+        }, 1500);
+      });
+    }
+  }
+
+  // ボタンは遅延読み込みされる場合があるため、複数回試行
+  watchNativePunchButtons();
+  setTimeout(watchNativePunchButtons, 3000);
+  setTimeout(watchNativePunchButtons, 6000);
 
   // 統合メッセージリスナー（ping, getPageInfo, INVALIDATE_CONTENT_CACHE）
   try {
