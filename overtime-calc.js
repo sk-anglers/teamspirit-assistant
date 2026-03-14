@@ -12,9 +12,18 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
   const OVERTIME_LIMIT = CONFIG.OVERTIME_LIMIT;
   const BREAK_MINUTES = CONFIG.BREAK_MINUTES;
 
+  // 入力値の NaN 防御（NaN は全比較が false になり「安全」と誤判定されるため）
+  totalMinutes = (isNaN(totalMinutes) || totalMinutes === null) ? 0 : totalMinutes;
+  actualDays = (isNaN(actualDays) || actualDays === null) ? 0 : actualDays;
+  scheduledMinutes = (isNaN(scheduledMinutes) || scheduledMinutes === null) ? 0 : scheduledMinutes;
+  todayWorkingMinutes = (isNaN(todayWorkingMinutes) || todayWorkingMinutes === null) ? 0 : todayWorkingMinutes;
+  remainingDays = (isNaN(remainingDays) || remainingDays === null) ? 0 : remainingDays;
+  completedDays = (isNaN(completedDays) || completedDays === null) ? 0 : completedDays;
+  totalDailyOvertimeMinutes = (isNaN(totalDailyOvertimeMinutes) || totalDailyOvertimeMinutes === null) ? 0 : totalDailyOvertimeMinutes;
+  holidayWorkMinutes = (isNaN(holidayWorkMinutes) || holidayWorkMinutes === null) ? 0 : holidayWorkMinutes;
+
   // 休日出勤を除外した平日勤務時間（法的計算用）
-  const safeHolidayWorkMinutes = (holidayWorkMinutes && !isNaN(holidayWorkMinutes)) ? holidayWorkMinutes : 0;
-  const workdayTotalMinutes = totalMinutes - safeHolidayWorkMinutes;
+  const workdayTotalMinutes = totalMinutes - holidayWorkMinutes;
 
   // actualDaysが0の場合は1として扱う（0除算防止、月初め対応）
   const safeActualDays = actualDays > 0 ? actualDays : 1;
@@ -29,9 +38,7 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
   const todayExcess = Math.max(0, todayNetWorkingMinutes - STANDARD_HOURS_PER_DAY);
 
   // 当日分を含めた8h超過累計（リアルタイム）
-  const baseDailyOvertimeMinutes = (totalDailyOvertimeMinutes !== undefined &&
-    totalDailyOvertimeMinutes !== null && !isNaN(totalDailyOvertimeMinutes))
-    ? totalDailyOvertimeMinutes : 0;
+  const baseDailyOvertimeMinutes = totalDailyOvertimeMinutes;
   const realTimeDailyOvertimeMinutes = baseDailyOvertimeMinutes + todayExcess;
 
   // 当日を含めた勤務日数（出勤中 or 当日勤務実績がある場合 +1）
@@ -105,9 +112,9 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
   // = 8h超過累計（当日含む） + (残り勤務日数（当日除く） × 確定日の平均残業)
   // 予測の乗数には確定日（当日除く）の平均を使用し、出勤直後の平均希薄化を防止
   // 当日分は dailyExcessTotal に既に含まれるため、残り日数から当日を除外
-  const futureRemainingDays = (todayWorkingMinutes > 0 && remainingDays > 0)
+  const futureRemainingDays = Math.max(0, (todayWorkingMinutes > 0 && remainingDays > 0)
     ? remainingDays - 1
-    : (remainingDays || 0);
+    : (remainingDays || 0));
   // 予測レート: 常に確定日（当日除く）の平均残業を使用
   // 出勤直後の希薄化防止: 当日分は含めない
   let forecastRate;

@@ -27,7 +27,7 @@
   let cachedData = null;
   let updateIntervalId = null;
 
-  // Utility functions and LOCATION_MAP are now in utils.js (loaded before content.js)
+  // Utility functions are in utils.js (loaded before content.js via manifest)
 
   // ==================== Page Detection (for punch) ====================
 
@@ -55,175 +55,6 @@
     return 'unknown';
   }
 
-  // ==================== Punch Functions ====================
-
-  function getCurrentStatus() {
-    try {
-      const clockOutBtn = findPunchButtonByText('退勤');
-      const clockInBtn = findPunchButtonByText('出勤');
-
-      if (clockOutBtn && !clockOutBtn.disabled) {
-        return { status: '出勤中', isWorking: true };
-      } else if (clockInBtn && !clockInBtn.disabled) {
-        return { status: '未出勤', isWorking: false };
-      }
-
-      return { status: '接続済み', isWorking: false };
-    } catch (error) {
-      return { status: '状態を取得できません', isWorking: false };
-    }
-  }
-
-  async function performClockIn(location) {
-    try {
-      await selectLocation(location);
-      await wait(500);
-
-      const clockInBtn = findPunchButtonByText('出勤');
-      if (!clockInBtn) {
-        throw new Error('出勤ボタンが見つかりません');
-      }
-
-      if (clockInBtn.disabled) {
-        throw new Error('既に出勤済みです');
-      }
-
-      simulateClick(clockInBtn);
-      await wait(1000);
-
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async function performClockOut(location) {
-    try {
-      const clockOutBtn = findPunchButtonByText('退勤');
-      if (!clockOutBtn) {
-        throw new Error('退勤ボタンが見つかりません');
-      }
-
-      if (clockOutBtn.disabled) {
-        throw new Error('出勤していないため退勤できません');
-      }
-
-      simulateClick(clockOutBtn);
-      await wait(1000);
-
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async function selectLocation(location) {
-    const locationText = LOCATION_MAP[location];
-    if (!locationText) return;
-
-    const buttons = document.querySelectorAll('button, input[type="button"], [role="button"], label');
-    for (const btn of buttons) {
-      const text = btn.textContent?.trim() || btn.value?.trim() || '';
-      if (text === locationText) {
-        const isSelected = btn.classList.contains('selected') ||
-                          btn.classList.contains('active') ||
-                          btn.getAttribute('aria-pressed') === 'true';
-        if (!isSelected) {
-          btn.click();
-          await wait(300);
-        }
-        return;
-      }
-    }
-  }
-
-  function findPunchButtonByText(text) {
-    if (text === '出勤') {
-      const btn = document.getElementById('btnStInput');
-      if (btn) return btn;
-    }
-    if (text === '退勤') {
-      const btn = document.getElementById('btnEtInput');
-      if (btn) return btn;
-    }
-
-    const buttons = document.querySelectorAll('button, input[type="button"], [role="button"]');
-    for (const btn of buttons) {
-      const btnText = btn.textContent?.trim() || btn.value?.trim() || '';
-      if (btnText === text) {
-        return btn;
-      }
-    }
-
-    return null;
-  }
-
-  function wait(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  function simulateClick(element) {
-    element.focus();
-
-    if (element.onclick) {
-      element.onclick();
-    }
-
-    const rect = element.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-
-    ['mousedown', 'mouseup', 'click'].forEach(eventType => {
-      element.dispatchEvent(new MouseEvent(eventType, {
-        bubbles: true, cancelable: true, view: window,
-        clientX: centerX, clientY: centerY
-      }));
-    });
-
-    element.click();
-  }
-
-  // ==================== Login Functions ====================
-
-  async function performLogin(email, password) {
-    try {
-      const usernameField = document.getElementById('username') ||
-                           document.querySelector('input[name="username"]') ||
-                           document.querySelector('input[type="email"]');
-
-      const passwordField = document.getElementById('password') ||
-                           document.querySelector('input[name="pw"]') ||
-                           document.querySelector('input[type="password"]');
-
-      const loginButton = document.getElementById('Login') ||
-                         document.querySelector('input[name="Login"]') ||
-                         document.querySelector('input[type="submit"]') ||
-                         document.querySelector('button[type="submit"]');
-
-      if (!usernameField) throw new Error('メールアドレス入力欄が見つかりません');
-      if (!passwordField) throw new Error('パスワード入力欄が見つかりません');
-      if (!loginButton) throw new Error('ログインボタンが見つかりません');
-
-      usernameField.focus();
-      usernameField.value = email;
-      usernameField.dispatchEvent(new Event('input', { bubbles: true }));
-
-      await wait(300);
-
-      passwordField.focus();
-      passwordField.value = password;
-      passwordField.dispatchEvent(new Event('input', { bubbles: true }));
-
-      await wait(300);
-
-      loginButton.click();
-
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
   // ==================== Data Loading ====================
 
   async function loadDataFromStorage() {
@@ -233,7 +64,7 @@
           resolve(null);
           return;
         }
-        chrome.storage.local.get(['attendanceData', 'lastFetched'], (result) => {
+        chrome.storage.local.get(['attendanceData'], (result) => {
           if (chrome.runtime.lastError) {
             resolve(null);
             return;
@@ -314,10 +145,10 @@
     missedCountEl.textContent = `${data.count}件`;
     missedCountEl.style.color = '#d93025';
 
-    // リスト表示（最大5件）
+    // リスト表示（最大5件）— DOM API で構築（XSS防止）
     const maxDisplay = 5;
     const items = data.items.slice(0, maxDisplay);
-    let listHtml = '';
+    const fragment = document.createDocumentFragment();
 
     items.forEach(item => {
       // 日付フォーマット: M/D (曜)
@@ -326,27 +157,35 @@
       const day = parseInt(dateParts[2], 10);
       const dateDisplay = `${month}/${day} (${item.dayOfWeek})`;
 
+      const row = document.createElement('div');
+      row.style.marginBottom = '2px';
+      row.textContent = dateDisplay;
+
       // ラベルの色分け
-      let labelHtml = '';
       if (item.label) {
         let labelColor = '#ea8600'; // デフォルト（オレンジ）
         if (item.type === 'no-both') {
           labelColor = '#d93025'; // 両方漏れは赤
         } else if (item.type === 'no-clock-in') {
           labelColor = '#1a73e8'; // 出勤漏れは青
-        } else if (item.type === 'no-clock-out') {
-          labelColor = '#ea8600'; // 退勤漏れはオレンジ
         }
-        labelHtml = ` <span style="color:${labelColor}; font-weight:600;">${item.label}</span>`;
+        const span = document.createElement('span');
+        span.style.cssText = `color:${labelColor}; font-weight:600;`;
+        span.textContent = ` ${item.label}`;
+        row.appendChild(span);
       }
-      listHtml += `<div style="margin-bottom:2px;">${dateDisplay}${labelHtml}</div>`;
+      fragment.appendChild(row);
     });
 
     if (data.count > maxDisplay) {
-      listHtml += `<div style="color:#999;">他${data.count - maxDisplay}件</div>`;
+      const moreEl = document.createElement('div');
+      moreEl.style.color = '#999';
+      moreEl.textContent = `他${data.count - maxDisplay}件`;
+      fragment.appendChild(moreEl);
     }
 
-    missedListEl.innerHTML = listHtml;
+    missedListEl.textContent = '';
+    missedListEl.appendChild(fragment);
   }
 
   // 打刻漏れデータを直接取得（キャッシュなし）
@@ -622,14 +461,15 @@
       clockInEl.textContent = data.clockInTime;
       clockOutEl.textContent = data.clockOutTime;
 
-      const clockInDate = parseTimeToDate(data.clockInTime);
-      const clockOutDate = parseTimeToDate(data.clockOutTime);
-      if (clockInDate && clockOutDate) {
-        // 日跨ぎ対応: 退勤時刻が出勤時刻より前なら退勤は翌日として扱う
-        if (clockOutDate < clockInDate) {
-          clockOutDate.setDate(clockOutDate.getDate() + 1);
+      // 統一関数 parseTimeToTimestamp を使用（#5 日跨ぎ補正ロジック統一）
+      let clockInTs = parseTimeToTimestamp(data.clockInTime);
+      let clockOutTs = parseTimeToTimestamp(data.clockOutTime);
+      if (clockInTs && clockOutTs) {
+        // 26時方式: 退勤が出勤より前なら翌日として扱う（夜勤の日跨ぎ対応）
+        if (clockOutTs < clockInTs) {
+          clockOutTs += CONFIG.TWENTY_FOUR_HOURS_MS;
         }
-        const workingMs = clockOutDate.getTime() - clockInDate.getTime();
+        const workingMs = clockOutTs - clockInTs;
         // 異常値チェック: マイナスまたは24時間超過は表示しない
         if (workingMs > 0 && workingMs < CONFIG.TWENTY_FOUR_HOURS_MS) {
           workingTimeEl.textContent = formatDuration(workingMs);
@@ -666,11 +506,15 @@
           const clockInTs2 = parseTimeToTimestamp(data.clockInTime);
           if (clockInTs2) {
             todayWorkingMinutes = Math.floor((Date.now() - clockInTs2) / 60000);
-            if (todayWorkingMinutes > 0 && todayWorkingMinutes < CONFIG.MAX_WORKING_MINUTES_PER_DAY) {
-              // 休憩控除: 6時間以上勤務の場合は1時間控除して totalMinutes に加算
+            if (todayWorkingMinutes >= CONFIG.MAX_WORKING_MINUTES_PER_DAY) {
+              console.warn('[TS-Assistant] todayWorkingMinutes exceeds 24h, likely stale timestamp:', todayWorkingMinutes);
+              todayWorkingMinutes = 0;
+            }
+            if (todayWorkingMinutes > 0) {
+              // 休憩控除: 6時間以上勤務の場合は休憩時間を控除して totalMinutes に加算
               let todayNetMinutes = todayWorkingMinutes;
               if (todayNetMinutes >= 6 * 60) {
-                todayNetMinutes -= 60;
+                todayNetMinutes -= CONFIG.BREAK_MINUTES;
               }
               currentTotalMinutes += todayNetMinutes;
             }
@@ -678,13 +522,19 @@
         } else if (data.clockOutTime) {
           // 退勤済み: TeamSpiritのtotalHoursに当日分が含まれるため、currentTotalMinutesへの加算は不要
           // todayWorkingMinutesはovertime計算用に算出するが、表示用totalには足さない
-          const clockInDate = parseTimeToDate(data.clockInTime);
-          const clockOutDate = parseTimeToDate(data.clockOutTime);
-          if (clockInDate && clockOutDate) {
-            if (clockOutDate < clockInDate) {
-              clockOutDate.setDate(clockOutDate.getDate() + 1);
+          // 統一関数 parseTimeToTimestamp を使用（#5 日跨ぎ補正ロジック統一）
+          let clockInTs2 = parseTimeToTimestamp(data.clockInTime);
+          let clockOutTs2 = parseTimeToTimestamp(data.clockOutTime);
+          if (clockInTs2 && clockOutTs2) {
+            // 26時方式: 退勤が出勤より前なら翌日として扱う
+            if (clockOutTs2 < clockInTs2) {
+              clockOutTs2 += CONFIG.TWENTY_FOUR_HOURS_MS;
             }
-            todayWorkingMinutes = Math.floor((clockOutDate.getTime() - clockInDate.getTime()) / 60000);
+            todayWorkingMinutes = Math.floor((clockOutTs2 - clockInTs2) / 60000);
+            if (todayWorkingMinutes >= CONFIG.MAX_WORKING_MINUTES_PER_DAY) {
+              console.warn('[TS-Assistant] todayWorkingMinutes exceeds 24h, likely stale timestamp:', todayWorkingMinutes);
+              todayWorkingMinutes = 0;
+            }
           }
         }
       }
@@ -730,16 +580,16 @@
             infoPanel.querySelector('#ts-required-per-day').textContent = formatMinutesToTime(requiredMinutesPerDay);
 
             if (data.isWorking && data.clockInTime) {
-              const clockInDate = parseTimeToDate(data.clockInTime);
-              if (clockInDate) {
-                const targetMs = clockInDate.getTime() + (requiredMinutesPerDay + 60) * 60 * 1000;
+              const clockInTs3 = parseTimeToTimestamp(data.clockInTime);
+              if (clockInTs3) {
+                const targetMs = clockInTs3 + (requiredMinutesPerDay + CONFIG.BREAK_MINUTES) * 60 * 1000;
                 targetTimeEl.textContent = formatTimeShort(new Date(targetMs));
               }
             }
           } else {
-            infoPanel.querySelector('#ts-required-per-day').textContent = '達成';
+            infoPanel.querySelector('#ts-required-per-day').textContent = '達成済み';
             infoPanel.querySelector('#ts-required-per-day').style.color = '#0d904f';
-            targetTimeEl.textContent = '達成';
+            targetTimeEl.textContent = '達成済み';
           }
         }
       }
@@ -766,7 +616,10 @@
       overtimeSection.style.display = 'none';
       return;
     }
-    // Note: actualDays の補正は呼び出し元（665-670行）で実施済み
+    // 月初めで実出勤日数が0でも、今日の勤務があれば1日としてカウント
+    if (actualDays === 0 && todayWorkingMinutes > 0) {
+      actualDays = 1;
+    }
 
     overtimeSection.style.display = 'block';
 
@@ -854,6 +707,7 @@
       // 日跨ぎ対応: 有効なセッションがあれば cachedData を補正
       if (chrome.runtime?.id) {
         chrome.storage.local.get(['clockInTimestamp', 'hasClockedOut'], (stored) => {
+          if (chrome.runtime.lastError) return;
           if (stored.clockInTimestamp && !stored.hasClockedOut) {
             const elapsed = Date.now() - stored.clockInTimestamp;
             if (elapsed > 0 && elapsed < CONFIG.TWENTY_FOUR_HOURS_MS) {
@@ -940,12 +794,6 @@
     // TeamSpiritセクションの後ろに挿入
     tsSection.parentNode.insertBefore(panelContainer, tsSection.nextSibling);
 
-    try {
-      if (chrome.runtime?.id) {
-        chrome.storage.local.set({ panelEmbedded: true });
-      }
-    } catch (e) {}
-
     console.log('[TS-Assistant] パネル埋め込み完了');
     initPanelData();
   }
@@ -973,54 +821,8 @@
     initPanelData();
   }
 
-  // ==================== Message Listener (for punch operations) ====================
-
-  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    const pageType = getPageType();
-
-    if (request.action === 'ping') {
-      sendResponse({ ready: true, pageType, url: window.location.href });
-      return;
-    }
-
-    if (request.action === 'getPageInfo') {
-      sendResponse({
-        isLoginPage: pageType === 'login',
-        isTeamSpiritPage: pageType === 'teamspirit',
-        pageType: pageType,
-        url: window.location.href,
-        title: document.title
-      });
-      return;
-    }
-
-    if (request.action === 'getStatus') {
-      const status = getCurrentStatus();
-      sendResponse(status);
-      return;
-    }
-
-    if (request.action === 'login') {
-      performLogin(request.email, request.password).then(result => {
-        sendResponse(result);
-      });
-      return true;
-    }
-
-    if (request.action === 'clockIn') {
-      performClockIn(request.location).then(result => {
-        sendResponse(result);
-      });
-      return true;
-    }
-
-    if (request.action === 'clockOut') {
-      performClockOut(request.location).then(result => {
-        sendResponse(result);
-      });
-      return true;
-    }
-  });
+  // ==================== Message Listener ====================
+  // 注意: onMessage リスナーは1つに統合すること（複数登録すると sendResponse の競合が起きる）
 
   // ==================== Initialization ====================
 
@@ -1066,28 +868,47 @@
         }
       }
     });
-    urlObserver.observe(document.body, { childList: true, subtree: true });
+    if (document.body) {
+      urlObserver.observe(document.body, { childList: true, subtree: true });
+    }
 
-    window.addEventListener('beforeunload', () => {
-      try {
-        if (isExtensionContextValid()) {
-          chrome.storage.local.remove(['panelEmbedded']);
-        }
-      } catch (e) {}
-    });
   }
   // iframeでは何もしない（メインフレームで処理）
 
-  // (#4) INVALIDATE_CONTENT_CACHE メッセージ受信: キャッシュ無効化してデータ再取得
+  // 統合メッセージリスナー（ping, getPageInfo, INVALIDATE_CONTENT_CACHE）
   try {
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+      if (request.action === 'ping') {
+        const pageType = getPageType();
+        sendResponse({ ready: true, pageType, url: window.location.href });
+        return false;
+      }
+
+      if (request.action === 'getPageInfo') {
+        const pageType = getPageType();
+        sendResponse({
+          isLoginPage: pageType === 'login',
+          isTeamSpiritPage: pageType === 'teamspirit',
+          pageType: pageType,
+          url: window.location.href,
+          title: document.title
+        });
+        return false;
+      }
+
       if (request.type === 'INVALIDATE_CONTENT_CACHE') {
         console.log('[TS-Assistant] content.js キャッシュ無効化');
         cachedData = null;
-        loadData().then(() => updateDisplay());
+        // storage の古い attendanceData ではなく background 経由で新しいデータを取得
+        requestDataFetch().then((data) => {
+          cachedData = data;
+          updateDisplay();
+        });
         sendResponse({ success: true });
-        return true;
+        return false;
       }
+
+      return false;
     });
   } catch (e) {}
 
@@ -1103,6 +924,7 @@
         // 出勤状態の変更を監視（ポップアップからの出勤打刻を即時反映）
         if (changes.hasClockedOut && changes.hasClockedOut.newValue === false) {
           chrome.storage.local.get(['clockInTimestamp'], (result) => {
+            if (chrome.runtime.lastError) return;
             if (cachedData && result.clockInTimestamp) {
               cachedData.isWorking = true;
               const clockInDate = new Date(result.clockInTimestamp);
@@ -1121,10 +943,13 @@
         // 退勤状態の変更を監視（ポップアップからの退勤打刻を即時反映）
         if (changes.hasClockedOut && changes.hasClockedOut.newValue === true) {
           chrome.storage.local.get(['clockInTimestamp', 'clockOutTimestamp'], (result) => {
-            if (cachedData && result.clockInTimestamp && result.clockOutTimestamp) {
+            if (chrome.runtime.lastError) return;
+            if (cachedData && result.clockInTimestamp) {
               cachedData.isWorking = false;
-              const clockOutDate = new Date(result.clockOutTimestamp);
-              cachedData.clockOutTime = `${String(clockOutDate.getHours()).padStart(2, '0')}:${String(clockOutDate.getMinutes()).padStart(2, '0')}`;
+              if (result.clockOutTimestamp) {
+                const clockOutDate = new Date(result.clockOutTimestamp);
+                cachedData.clockOutTime = `${String(clockOutDate.getHours()).padStart(2, '0')}:${String(clockOutDate.getMinutes()).padStart(2, '0')}`;
+              }
               updateDisplay();
 
               // 退勤後: 毎秒フル更新を停止し、現在時刻のみ更新する軽量intervalに切替

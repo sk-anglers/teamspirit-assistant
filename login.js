@@ -8,17 +8,18 @@ function waitForLoginRedirect(tabId) {
     }, 30000);
 
     let checkCount = 0;
-    const maxChecks = 60; // More checks with shorter interval
+    const maxChecks = 60;
+    let settled = false;
 
     const checkPage = async () => {
+      if (settled) return;
       try {
         const tab = await chrome.tabs.get(tabId);
-        // Check by URL or title
         const isLoggedIn = (tab.url && (tab.url.includes('lightning.force.com') || tab.url.includes('lightning/page'))) ||
                           (tab.title && tab.title.includes('Salesforce') && !tab.title.includes('Login'));
         if (isLoggedIn) {
+          settled = true;
           clearTimeout(timeout);
-          // Reduced stabilization wait from 2000ms to 500ms
           await new Promise(r => setTimeout(r, 500));
           resolve();
           return;
@@ -26,20 +27,20 @@ function waitForLoginRedirect(tabId) {
 
         checkCount++;
         if (checkCount >= maxChecks) {
+          settled = true;
           clearTimeout(timeout);
-          resolve(); // Proceed anyway
+          resolve();
           return;
         }
 
-        // Poll every 500ms instead of 1500ms
         setTimeout(checkPage, 500);
       } catch (error) {
+        settled = true;
         clearTimeout(timeout);
         reject(error);
       }
     };
 
-    // Start checking immediately instead of waiting 2000ms
     setTimeout(checkPage, 500);
   });
 }

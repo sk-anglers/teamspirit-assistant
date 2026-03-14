@@ -292,13 +292,14 @@ async function performPunch(action, location) {
 
         // キャッシュ無効化後、サマリーデータを再取得して表示
         chrome.runtime.sendMessage({ type: 'INVALIDATE_CACHE' }, () => {
+          if (chrome.runtime.lastError) { /* SW停止中は無視 */ }
           loadMissedPunchData();
           fetchClockInTimeFromSite().then((fetchResult) => {
             if (fetchResult && fetchResult.summary) {
               displaySummary(fetchResult.summary, true, fetchResult.clockInTimestamp);
               startTimeUpdates();
             }
-          });
+          }).catch(e => console.warn('[TS-Assistant] 出勤後データ取得失敗:', e));
         });
       } else {
         showStatus('退勤済み', 'logged-in');
@@ -306,7 +307,7 @@ async function performPunch(action, location) {
         // Get clock-in timestamp and set clock-out timestamp
         const stored = await chrome.storage.local.get('clockInTimestamp');
         const clockOutTimestamp = Date.now();
-        await chrome.storage.local.set({ hasClockedOut: true, clockOutTimestamp: clockOutTimestamp, lastPunchTime: Date.now(), lastPunchAction: 'clockOut' });
+        await chrome.storage.local.set({ hasClockedOut: true, clockOutTimestamp, lastPunchTime: clockOutTimestamp, lastPunchAction: 'clockOut' });
         // Show final time display (this also stops the interval)
         if (stored.clockInTimestamp) {
           updateTimeDisplayFinal(stored.clockInTimestamp, clockOutTimestamp);
@@ -315,14 +316,16 @@ async function performPunch(action, location) {
         // キャッシュを無効化してから、遅延付きでデータを再取得
         // TeamSpiritのサーバー反映ラグ（1-2秒）を考慮して2秒待機
         chrome.runtime.sendMessage({ type: 'INVALIDATE_CACHE' }, () => {
+          if (chrome.runtime.lastError) { /* SW停止中は無視 */ }
           loadMissedPunchData();
           setTimeout(() => {
             chrome.runtime.sendMessage({ type: 'INVALIDATE_CACHE' }, () => {
+              if (chrome.runtime.lastError) { /* SW停止中は無視 */ }
               fetchClockInTimeFromSite().then((fetchResult) => {
                 if (fetchResult && fetchResult.summary) {
                   displaySummary(fetchResult.summary, false, stored.clockInTimestamp, clockOutTimestamp);
                 }
-              });
+              }).catch(e => console.warn('[TS-Assistant] 退勤後データ取得失敗:', e));
             });
           }, 2000);
         });
@@ -371,5 +374,9 @@ async function performPunch(action, location) {
   } finally {
     btn.classList.remove('loading');
     _punchInProgress = false;
+    // エラー時にボタンが disabled のまま残るのを防止
+    // 注意: 正常成功パスでは updateButtonStates() が適切な状態を設定済み
+    // 'clocked-out' 状態（両方 disabled）は正常なので解除しない
+    // ここでは「loading 中間状態」（両方 disabled かつ updateButtonStates 未呼出）のみ回復する
   }
 }

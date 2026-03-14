@@ -116,18 +116,18 @@ async function fetchAllAttendanceData() {
       allDataCache = null;
       allDataCacheTime = 0;
       await chrome.storage.local.remove([
-        'attendanceData', 'lastFetched', 'clockInTimestamp',
+        'attendanceData', 'clockInTimestamp',
         'clockOutTimestamp', 'hasClockedOut', 'workSummary',
         'lastPunchTime', 'lastPunchAction'
       ]);
     }
   } else {
     // Service Worker再起動後: メモリキャッシュがないため storage の日付をチェック (#6)
-    const stored = await chrome.storage.local.get(['lastAccessDate', 'lastFetched']);
+    const stored = await chrome.storage.local.get(['lastAccessDate']);
     if (stored.lastAccessDate && stored.lastAccessDate !== todayDateStr) {
       console.log('[TS-Assistant] SW再起動後の日付変更を検出、storageクリア');
       await chrome.storage.local.remove([
-        'attendanceData', 'lastFetched', 'clockInTimestamp',
+        'attendanceData', 'clockInTimestamp',
         'clockOutTimestamp', 'hasClockedOut', 'workSummary',
         'lastPunchTime', 'lastPunchAction', 'lastAccessDate'
       ]);
@@ -234,7 +234,7 @@ async function fetchAllAttendanceDataInternal() {
     // 1回のスクリプト実行で全データを取得
     const results = await chrome.scripting.executeScript({
       target: { tabId: tempTab.id, allFrames: true },
-      func: (dateList, todayStr) => {
+      func: (dateList, todayStr, STANDARD_MINUTES_PER_DAY, BREAK_MINUTES) => {
         const result = {
           success: false,
           todayData: null,
@@ -302,13 +302,14 @@ async function fetchAllAttendanceDataInternal() {
             table.querySelectorAll('tr').forEach(row => {
               const cells = row.querySelectorAll('td, th');
               if (cells.length >= 2) {
-                const label = cells[0].textContent?.trim();
+                const label = cells[0].textContent?.trim()?.replace(/\s+/g, '');
                 const value = cells[cells.length - 1].textContent?.trim();
-                if (label?.includes('所定労働時間')) summaryData.scheduledHours = value;
-                if (label?.includes('総労働時間') && !label?.includes('法定')) summaryData.totalHours = value;
-                if (label?.includes('過不足時間')) summaryData.overUnderHours = value;
-                if (label?.includes('所定出勤日数')) summaryData.scheduledDays = value;
-                if (label?.includes('実出勤日数')) summaryData.actualDays = value;
+                // ラベル完全一致を優先、なければ部分一致（複数マッチ時の上書き防止）
+                if (label === '所定労働時間' || (!summaryData.scheduledHours && label?.includes('所定労働時間'))) summaryData.scheduledHours = value;
+                if (label === '総労働時間' || (!summaryData.totalHours && label?.includes('総労働時間') && !label?.includes('法定'))) summaryData.totalHours = value;
+                if (label === '過不足時間' || (!summaryData.overUnderHours && label?.includes('過不足時間') && !label?.includes('法定'))) summaryData.overUnderHours = value;
+                if (label === '所定出勤日数' || (!summaryData.scheduledDays && label?.includes('所定出勤日数'))) summaryData.scheduledDays = value;
+                if (label === '実出勤日数' || (!summaryData.actualDays && label?.includes('実出勤日数'))) summaryData.actualDays = value;
               }
             });
           });
@@ -337,8 +338,6 @@ async function fetchAllAttendanceDataInternal() {
           let totalDailyOvertimeMinutes = 0;
           let holidayWorkDays = 0;
           let holidayWorkMinutes = 0;
-          const STANDARD_MINUTES_PER_DAY = 8 * 60; // 8時間 = 480分
-          const BREAK_MINUTES = 60; // 休憩1時間
 
           for (const dateStr of Object.keys(result.monthlyData)) {
             // 当日は除外（勤務時間が確定していないため）
@@ -403,7 +402,7 @@ async function fetchAllAttendanceDataInternal() {
           return result;
         }
       },
-      args: [dateList, todayStr]
+      args: [dateList, todayStr, CONFIG.STANDARD_HOURS_PER_DAY, CONFIG.BREAK_MINUTES]
     });
 
     // Close temp tab
@@ -485,7 +484,6 @@ async function fetchAllAttendanceDataInternal() {
 
         const storageUpdate = {
           attendanceData: data.todayData,
-          lastFetched: Date.now(),
           workSummary: data.summary
         };
 
@@ -653,6 +651,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
   // Set default location
   chrome.storage.local.get('savedLocation', (result) => {
+    if (chrome.runtime.lastError) return;
     if (!result.savedLocation) {
       chrome.storage.local.set({ savedLocation: 'remote' });
     }
@@ -661,12 +660,6 @@ chrome.runtime.onInstalled.addListener(() => {
 
 // Handle messages from popup or content script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'openTeamSpirit') {
-    chrome.tabs.create({ url: CONFIG.TEAMSPIRIT_URL });
-    sendResponse({ success: true });
-    return true;
-  }
-
   // Handle fetch request from content script
   if (request.type === 'FETCH_ATTENDANCE_DATA') {
     fetchAllAttendanceData().then(allData => {
@@ -710,10 +703,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
     });
     sendResponse({ success: true });
-    return true;
+    return false;
   }
 
-  return true;
+  // 未知のメッセージタイプ: 非同期チャネルを開かない
+  return false;
 });
 
 // 本日が出勤日かどうかをチェック（勤怠表データから判定）

@@ -20,12 +20,6 @@ function isCurrentWorkSession(timestamp) {
   return elapsed > 0 && elapsed < CONFIG.TWENTY_FOUR_HOURS_MS;
 }
 
-// Save clock-in timestamp (called when punching in via extension)
-async function saveClockInTime() {
-  const now = Date.now();
-  await chrome.storage.local.set({ clockInTimestamp: now });
-}
-
 // Clear clock-in timestamp (called when punching out via extension)
 async function clearClockInTime() {
   await chrome.storage.local.remove('clockInTimestamp');
@@ -170,18 +164,18 @@ async function waitForLoginForm(tabId, maxWaitMs = 10000, showMessageFn = null) 
 
 function waitForTabLoad(tabId) {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error('タブの読み込みがタイムアウトしました'));
-    }, 60000);
-
     const listener = (updatedTabId, changeInfo) => {
       if (updatedTabId === tabId && changeInfo.status === 'complete') {
         clearTimeout(timeout);
         chrome.tabs.onUpdated.removeListener(listener);
-        // Reduced from 3000ms to 500ms - will poll for elements instead
         setTimeout(resolve, 500);
       }
     };
+
+    const timeout = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error('タブの読み込みがタイムアウトしました'));
+    }, 60000);
 
     chrome.tabs.onUpdated.addListener(listener);
   });
@@ -231,7 +225,7 @@ async function waitForContentScript(tabId, maxRetries = 10) {
         if (tab.url && tab.url.startsWith('https://')) {
           await chrome.scripting.executeScript({
             target: { tabId },
-            files: ['content.js']
+            files: ['config.js', 'utils.js', 'overtime-calc.js', 'content.js']
           });
           injected = true;
           console.log('Content script injected manually');

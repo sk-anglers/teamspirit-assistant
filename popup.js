@@ -61,10 +61,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Time update interval
   let timeUpdateInterval = null;
 
-  // Constants for overtime calculation (config.js で一元管理)
-  const STANDARD_HOURS_PER_DAY = CONFIG.STANDARD_HOURS_PER_DAY;
-  const OVERTIME_LIMIT = CONFIG.OVERTIME_LIMIT;
-
   // Load saved data
   const stored = await chrome.storage.local.get(['savedLocation', 'savedEmail', 'isLoggedIn', 'summaryCollapsed', 'missedPunchCollapsed', 'encryptedPassword']);
 
@@ -314,6 +310,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Update working time if clocked in (and not clocked out), and update summary in real-time
     chrome.storage.local.get(['clockInTimestamp', 'workSummary', 'hasClockedOut'], (result) => {
+      if (chrome.runtime.lastError) return;
       // Fix: clockInTimestamp が有効なワークセッションかどうかを検証（深夜勤務対応）
       if (result.clockInTimestamp && !result.hasClockedOut && isCurrentWorkSession(result.clockInTimestamp)) {
         const clockInDate = new Date(result.clockInTimestamp);
@@ -344,10 +341,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Add today's working time to base total
     const todayWorkingMinutes = Math.floor(todayWorkingMs / 60000);
-    // 休憩控除: 6時間以上勤務の場合は1時間控除して totalMinutes に加算
+    // 休憩控除: 6時間以上勤務の場合は休憩時間を控除して totalMinutes に加算
     let todayNetMinutes = todayWorkingMinutes;
     if (todayNetMinutes >= 6 * 60) {
-      todayNetMinutes -= 60;
+      todayNetMinutes -= CONFIG.BREAK_MINUTES;
     }
     const realTimeTotalMinutes = baseTotalMinutes + todayNetMinutes;
 
@@ -405,14 +402,24 @@ document.addEventListener('DOMContentLoaded', async () => {
           requiredPerDayEl.classList.add('positive');
           requiredPerDayEl.classList.remove('negative');
         }
+      } else {
+        // 月末最終日（remainingDays === 0）
+        const remainingMinutes = scheduledMinutes - realTimeTotalMinutes;
+        if (remainingMinutes > 0) {
+          requiredPerDayEl.textContent = formatMinutesToTime(remainingMinutes);
+          requiredPerDayEl.classList.remove('negative', 'positive');
+        } else {
+          requiredPerDayEl.textContent = '達成済み';
+          requiredPerDayEl.classList.add('positive');
+          requiredPerDayEl.classList.remove('negative');
+        }
       }
     }
 
     // Calculate target clock-out time
     // Formula: 出勤時刻 + 一日当たり必要時間 + 休憩1時間
     if (clockInTimestamp && requiredMinutesPerDay > 0) {
-      const breakMinutes = 60; // 1 hour break
-      const targetMs = clockInTimestamp + (requiredMinutesPerDay + breakMinutes) * 60 * 1000;
+      const targetMs = clockInTimestamp + (requiredMinutesPerDay + CONFIG.BREAK_MINUTES) * 60 * 1000;
       const targetDate = new Date(targetMs);
       targetClockOutEl.textContent = formatTimeShort(targetDate);
     } else if (requiredMinutesPerDay === 0) {
@@ -529,9 +536,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     clockInTimeEl.textContent = formatTimeShort(clockInDate);
 
     // Show clock-out time and row
-    const clockOutDate = new Date(clockOutTs);
-    clockOutTimeEl.textContent = formatTimeShort(clockOutDate);
-    clockOutRow.style.display = 'flex';
+    if (clockOutTs) {
+      const clockOutDate = new Date(clockOutTs);
+      clockOutTimeEl.textContent = formatTimeShort(clockOutDate);
+      clockOutRow.style.display = 'flex';
+    } else {
+      clockOutTimeEl.textContent = '--:--';
+      clockOutRow.style.display = 'flex';
+    }
 
     // Hide target row (not relevant when clocked out)
     targetRow.style.display = 'none';
@@ -588,8 +600,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (hasCachedClockIn) {
       // Use cached data
-      const isCurrentlyWorking = !(stored.hasClockedOut && stored.clockOutTimestamp);
-      if (stored.hasClockedOut && stored.clockOutTimestamp) {
+      const isCurrentlyWorking = !stored.hasClockedOut;
+      if (stored.hasClockedOut) {
         showStatus('退勤済み', 'logged-in');
         updateButtonStates('clocked-out');
         timeSection.classList.remove('hidden');
@@ -688,7 +700,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (isWorking) {
         // Currently working: add time from clock-in to now
         todayWorkingMinutes = Math.floor((Date.now() - clockInTimestamp) / 60000);
-        if (todayWorkingMinutes > CONFIG.MAX_WORKING_MINUTES_PER_DAY) {
+        if (todayWorkingMinutes >= CONFIG.MAX_WORKING_MINUTES_PER_DAY) {
           console.warn('[TS-Assistant] todayWorkingMinutes exceeds 24h, likely stale timestamp:', todayWorkingMinutes);
           todayWorkingMinutes = 0;
         }
@@ -696,7 +708,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 退勤済み: TeamSpiritのtotalHoursに当日分が含まれるため、totalMinutesへの加算は不要
         // todayWorkingMinutesはovertimeCalc用に計算するが、totalMinutesには足さない
         todayWorkingMinutes = Math.floor((clockOutTimestamp - clockInTimestamp) / 60000);
-        if (todayWorkingMinutes > CONFIG.MAX_WORKING_MINUTES_PER_DAY) {
+        if (todayWorkingMinutes >= CONFIG.MAX_WORKING_MINUTES_PER_DAY) {
           console.warn('[TS-Assistant] todayWorkingMinutes exceeds 24h, likely stale timestamp:', todayWorkingMinutes);
           todayWorkingMinutes = 0;
         }
@@ -707,11 +719,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       // totalMinutes への加算: 出勤中のみ（退勤済みはTeamSpiritのtotalHoursに当日分含む）
       if (isWorking && totalMinutes !== null && todayWorkingMinutes > 0) {
-        // 休憩控除: 6時間以上勤務の場合は1時間控除して totalMinutes に加算
+        // 休憩控除: 6時間以上勤務の場合は休憩時間を控除して totalMinutes に加算
         // todayWorkingMinutes 自体は変更しない（calculateOvertimeData内部で休憩控除するため）
         let todayNetMinutes = todayWorkingMinutes;
         if (todayNetMinutes >= 6 * 60) {
-          todayNetMinutes -= 60;
+          todayNetMinutes -= CONFIG.BREAK_MINUTES;
         }
         totalMinutes += todayNetMinutes;
       }
@@ -760,6 +772,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // remainingWorkdaysがあればそれを使用、なければ従来の計算
     const remainingWorkdays = parseInt(summary.remainingWorkdays, 10);
     let remainingDays = !isNaN(remainingWorkdays) ? remainingWorkdays : (scheduledDays - actualDays);
+    if (isNaN(remainingDays)) remainingDays = 0;
 
     // 退勤打刻済み日数と日次残業合計を取得（残業/日の計算に使用）
     // NaNチェック: parseIntが失敗した場合は0として扱う
@@ -914,7 +927,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!data) {
       missedPunchCount.textContent = '確認中...';
       missedPunchCount.className = 'missed-count';
-      missedPunchList.innerHTML = '';
+      missedPunchList.textContent = '';
       headerWarning.classList.add('hidden');
       return;
     }
@@ -922,7 +935,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!data.success) {
       missedPunchCount.textContent = '取得失敗';
       missedPunchCount.className = 'missed-count has-missed';
-      missedPunchList.innerHTML = '';
+      missedPunchList.textContent = '';
       headerWarning.classList.add('hidden');
       return;
     }
@@ -931,15 +944,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (data.count === 0) {
       missedPunchCount.textContent = '漏れなし';
       missedPunchCount.className = 'missed-count no-missed';
-      missedPunchList.innerHTML = '<div class="missed-punch-empty">打刻漏れはありません</div>';
+      const emptyEl = document.createElement('div');
+      emptyEl.className = 'missed-punch-empty';
+      emptyEl.textContent = '打刻漏れはありません';
+      missedPunchList.textContent = '';
+      missedPunchList.appendChild(emptyEl);
       headerWarning.classList.add('hidden');
     } else {
       missedPunchCount.textContent = `${data.count}件`;
       missedPunchCount.className = 'missed-count has-missed';
       headerWarning.classList.remove('hidden');
 
-      // Build list HTML
-      let listHtml = '';
+      // Build list via DOM API (innerHTML を使わない)
+      missedPunchList.textContent = '';
       data.items.forEach(item => {
         const dateParts = item.date.split('-');
         const month = parseInt(dateParts[1], 10);
@@ -959,15 +976,18 @@ document.addEventListener('DOMContentLoaded', async () => {
           labelText = '退';
         }
 
-        listHtml += `
-          <div class="missed-punch-item">
-            <span class="missed-punch-date">${dateDisplay}</span>
-            <span class="missed-punch-label ${labelClass}">${labelText}</span>
-          </div>
-        `;
+        const row = document.createElement('div');
+        row.className = 'missed-punch-item';
+        const dateSpan = document.createElement('span');
+        dateSpan.className = 'missed-punch-date';
+        dateSpan.textContent = dateDisplay;
+        const labelSpan = document.createElement('span');
+        labelSpan.className = `missed-punch-label ${labelClass}`;
+        labelSpan.textContent = labelText;
+        row.appendChild(dateSpan);
+        row.appendChild(labelSpan);
+        missedPunchList.appendChild(row);
       });
-
-      missedPunchList.innerHTML = listHtml;
     }
 
     // Show section
@@ -990,6 +1010,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       // Request fresh data from background
       chrome.runtime.sendMessage({ type: 'CHECK_MISSED_PUNCHES' }, (response) => {
+        if (chrome.runtime.lastError) {
+          updateMissedPunchSection({ success: false });
+          return;
+        }
         if (response) {
           updateMissedPunchSection(response);
         } else {
