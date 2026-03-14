@@ -723,24 +723,28 @@ async function checkTodayWorkday() {
     // 勤怠表データを取得
     const monthlyData = await fetchMonthlyAttendanceData();
 
+    // 曜日・祝日ベースの判定（土日・祝日 = 休日）
+    const isWorkdayByCalendar = isWorkingDay(today, holidays);
+
     if (monthlyData && monthlyData[today]) {
       const todayData = monthlyData[today];
-      // 勤怠表データで休日判定（ttvTimeSt要素がない or rowcntクラスがある）
+      // 勤怠表の isHoliday OR カレンダー上の休日 → 休日と判定
+      // （勤怠表に rowcnt クラスがなくても土日・祝日なら休日扱い）
+      const isHoliday = todayData.isHoliday || !isWorkdayByCalendar;
       return {
         success: true,
-        isWorkday: !todayData.isHoliday,
+        isWorkday: !isHoliday,
         dayOfWeek: dayOfWeekStr,
-        holidayName: holidayName // 祝日名（該当する場合）
+        holidayName: holidayName
       };
     }
 
-    // データ取得失敗時は祝日APIでフォールバック
+    // データ取得失敗時はカレンダー判定のみ
     console.log('[TS-Assistant] 勤怠表データなし、祝日APIでフォールバック');
-    const isWorkday = isWorkingDay(today, holidays);
 
     return {
       success: true,
-      isWorkday: isWorkday,
+      isWorkday: isWorkdayByCalendar,
       dayOfWeek: dayOfWeekStr,
       holidayName: holidayName
     };
