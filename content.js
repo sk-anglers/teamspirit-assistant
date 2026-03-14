@@ -26,6 +26,7 @@
   let retryCount = 0;
   let cachedData = null;
   let updateIntervalId = null;
+  let todayIsHoliday = false;
 
   // Utility functions are in utils.js (loaded before content.js via manifest)
 
@@ -242,10 +243,12 @@
 
     // 出勤日/休日バッジ
     if (data.isWorkday) {
+      todayIsHoliday = false;
       todayTypeEl.textContent = '出勤日';
       todayTypeEl.style.background = '#e8f0fe';
       todayTypeEl.style.color = '#1a73e8';
     } else {
+      todayIsHoliday = true;
       todayTypeEl.textContent = '休日';
       todayTypeEl.style.background = '#f5f5f5';
       todayTypeEl.style.color = '#666';
@@ -541,7 +544,16 @@
 
       // 休日出勤時間を取得（法的残業・過不足から除外するため）
       const holidayWorkMinutesRaw = parseInt(summary.holidayWorkMinutes, 10);
-      const holidayWorkMinutes = isNaN(holidayWorkMinutesRaw) ? 0 : holidayWorkMinutesRaw;
+      let holidayWorkMinutes = isNaN(holidayWorkMinutesRaw) ? 0 : holidayWorkMinutesRaw;
+
+      // 休日出勤中なら当日分をリアルタイム加算
+      let todayNetMinutes = todayWorkingMinutes;
+      if (todayNetMinutes >= 6 * 60) {
+        todayNetMinutes -= CONFIG.BREAK_MINUTES;
+      }
+      if (todayIsHoliday && todayNetMinutes > 0) {
+        holidayWorkMinutes += todayNetMinutes;
+      }
 
       if (totalMinutes !== null) {
         totalHoursEl.textContent = formatMinutesToTime(currentTotalMinutes);
@@ -684,15 +696,17 @@
       overtimeAlertEl.style.display = 'none';
     }
 
-    // 休日出勤表示
+    // 休日出勤表示（リアルタイム）
     const holidayWorkRow = infoPanel.querySelector('#ts-holiday-work-row');
     const holidayWorkInfoEl = infoPanel.querySelector('#ts-holiday-work-info');
     if (holidayWorkRow && holidayWorkInfoEl) {
-      const hwDays = parseInt(summary.holidayWorkDays, 10);
-      const hwMinutes = parseInt(summary.holidayWorkMinutes, 10);
-      if (!isNaN(hwDays) && hwDays > 0) {
+      const hwDays = parseInt(summary.holidayWorkDays, 10) || 0;
+      const hwMinutes = parseInt(summary.holidayWorkMinutes, 10) || 0;
+      const rtHolidayDays = hwDays + (todayIsHoliday && todayWorkingMinutes > 0 ? 1 : 0);
+      const rtHolidayMinutes = holidayWorkMinutes; // 既に当日分加算済み
+      if (rtHolidayDays > 0) {
         holidayWorkRow.style.display = 'flex';
-        holidayWorkInfoEl.textContent = `${hwDays}日 (${formatMinutesToTime(hwMinutes)})`;
+        holidayWorkInfoEl.textContent = `${rtHolidayDays}日 (${formatMinutesToTime(rtHolidayMinutes)})`;
       } else {
         holidayWorkRow.style.display = 'none';
       }

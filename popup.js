@@ -61,6 +61,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Time update interval
   let timeUpdateInterval = null;
 
+  // 今日が休日かどうか（CHECK_TODAY_WORKDAY の結果を保持）
+  let todayIsHoliday = false;
+
   // Load saved data
   const stored = await chrome.storage.local.get(['savedLocation', 'savedEmail', 'isLoggedIn', 'summaryCollapsed', 'missedPunchCollapsed', 'encryptedPassword']);
 
@@ -353,7 +356,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 休日出勤時間を取得（過不足から除外）
     const holidayWorkMinutesRaw = parseInt(summary.holidayWorkMinutes, 10);
-    const holidayWorkMinutes = isNaN(holidayWorkMinutesRaw) ? 0 : holidayWorkMinutesRaw;
+    let holidayWorkMinutes = isNaN(holidayWorkMinutesRaw) ? 0 : holidayWorkMinutesRaw;
+
+    // 休日出勤中なら当日分をリアルタイム加算
+    if (todayIsHoliday && todayNetMinutes > 0) {
+      holidayWorkMinutes += todayNetMinutes;
+    }
 
     // Calculate and update over/under hours (休日出勤除外)
     const overUnderMinutes = (realTimeTotalMinutes - holidayWorkMinutes) - scheduledMinutes;
@@ -433,6 +441,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     const effectiveActualDays = (actualDays === 0 && todayWorkingMinutes > 0) ? 1 : actualDays;
     if (!isNaN(scheduledDays) && !isNaN(effectiveActualDays) && (effectiveActualDays > 0 || todayWorkingMinutes > 0)) {
       updateOvertimeSectionRealTime(realTimeTotalMinutes, scheduledDays, effectiveActualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes);
+    }
+
+    // 休日出勤表示のリアルタイム更新
+    const holidayWorkRow = document.getElementById('holidayWorkRow');
+    const holidayWorkInfoEl = document.getElementById('holidayWorkInfo');
+    if (holidayWorkRow && holidayWorkInfoEl) {
+      const hwDays = parseInt(summary.holidayWorkDays, 10) || 0;
+      const hwMinutes = parseInt(summary.holidayWorkMinutes, 10) || 0;
+      const rtHolidayDays = hwDays + (todayIsHoliday && todayWorkingMinutes > 0 ? 1 : 0);
+      const rtHolidayMinutes = hwMinutes + (todayIsHoliday ? todayNetMinutes : 0);
+      if (rtHolidayDays > 0) {
+        holidayWorkRow.style.display = 'flex';
+        holidayWorkInfoEl.textContent = `${rtHolidayDays}日 (${formatMinutesToTime(rtHolidayMinutes)})`;
+      } else {
+        holidayWorkRow.style.display = 'none';
+      }
     }
   }
 
@@ -1059,9 +1083,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Update type badge (出勤日 or 休日)
         if (response.isWorkday) {
+          todayIsHoliday = false;
           todayTypeEl.textContent = '出勤日';
           todayTypeEl.className = 'today-type workday';
         } else {
+          todayIsHoliday = true;
           todayTypeEl.textContent = '休日';
           todayTypeEl.className = 'today-type holiday';
         }
