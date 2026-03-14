@@ -2,7 +2,7 @@
 // Handles data fetching and message passing
 
 // URL定数は config.js の CONFIG オブジェクトで一元管理
-importScripts('config.js');
+importScripts('config.js', 'utils.js');
 
 // ==================== 祝日API ====================
 
