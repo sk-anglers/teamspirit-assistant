@@ -106,10 +106,12 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
     dailyExcessLevel = 'normal';
   }
 
-  // 月末予測 = 残業/日（平均） × 月の全勤務日数
-  // 「このペースで残業を続けたら月末にこの残業時間になる」を表示
+  // 月末予測 = max(0, 平均勤務時間/日 × 全勤務日数 − 所定労働時間)
+  // 「このペースだと月末の月間残業はこうなる」を表示
+  // 短い日が長い日を相殺するフルフレックスの実態に即した予測
   const totalExpectedDays = realTimeCompletedDays + Math.max(0, remainingDays || 0);
-  const forecastOvertime = avgOvertimePerDay * totalExpectedDays;
+  const avgTotalPerDay = Math.round(totalMinutes / safeCompletedDays);
+  const forecastOvertime = Math.max(0, avgTotalPerDay * totalExpectedDays - scheduledMinutes);
 
   // 月末予測の警告レベル
   let forecastLevel;
