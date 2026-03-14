@@ -12,7 +12,10 @@
   "host_permissions": [
     "https://teamspirit-74532.lightning.force.com/*",
     "https://teamspirit-74532.my.salesforce.com/*",
-    "https://login.salesforce.com/*"
+    "https://login.salesforce.com/*",
+    "https://*.salesforce.com/*",
+    "https://*.my.salesforce.com/*",
+    "https://*.force.com/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -32,7 +35,10 @@
       "matches": [
         "https://teamspirit-74532.lightning.force.com/*",
         "https://teamspirit-74532.my.salesforce.com/*",
-        "https://login.salesforce.com/*"
+        "https://login.salesforce.com/*",
+        "https://*.salesforce.com/*",
+        "https://*.my.salesforce.com/*",
+        "https://*.force.com/*"
       ],
       "js": ["config.js", "utils.js", "overtime-calc.js", "content.js"],
       "css": ["content-styles.css"],
