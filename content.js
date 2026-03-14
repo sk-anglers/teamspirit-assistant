@@ -662,8 +662,8 @@
       let currentTotalMinutes = totalMinutes || 0;
       let todayWorkingMinutes = 0;
       // 本日分勤務時間の加算
-      // TeamSpiritのtotalHoursは前日までの累計（本日分を含まない）
-      // 出勤中・退勤済みの両方で本日分を加算する
+      // TeamSpiritのtotalHoursは退勤後に当日分を含む値を返す
+      // 出勤中のみ本日分を加算（退勤済みは既にtotalHoursに含まれるため加算不要）
       const MAX_WORKING_MINUTES = 24 * 60;
       if (data.clockInTime && totalMinutes !== null) {
         if (data.isWorking) {
@@ -685,7 +685,8 @@
             }
           }
         } else if (data.clockOutTime) {
-          // 退勤済み: 出勤時刻〜退勤時刻で確定計算
+          // 退勤済み: TeamSpiritのtotalHoursに当日分が含まれるため、currentTotalMinutesへの加算は不要
+          // todayWorkingMinutesはovertime計算用に算出するが、表示用totalには足さない
           const clockInDate = parseTimeToDate(data.clockInTime);
           const clockOutDate = parseTimeToDate(data.clockOutTime);
           if (clockInDate && clockOutDate) {
@@ -693,14 +694,6 @@
               clockOutDate.setDate(clockOutDate.getDate() + 1);
             }
             todayWorkingMinutes = Math.floor((clockOutDate.getTime() - clockInDate.getTime()) / 60000);
-            if (todayWorkingMinutes > 0 && todayWorkingMinutes < MAX_WORKING_MINUTES) {
-              // 休憩控除: 6時間以上勤務の場合は1時間控除して totalMinutes に加算
-              let todayNetMinutes = todayWorkingMinutes;
-              if (todayNetMinutes >= 6 * 60) {
-                todayNetMinutes -= 60;
-              }
-              currentTotalMinutes += todayNetMinutes;
-            }
           }
         }
       }

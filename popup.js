@@ -691,9 +691,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           todayWorkingMinutes = 0;
         }
       } else if (clockOutTimestamp) {
-        // Clocked out: add time from clock-in to clock-out
+        // 退勤済み: TeamSpiritのtotalHoursに当日分が含まれるため、totalMinutesへの加算は不要
+        // todayWorkingMinutesはovertimeCalc用に計算するが、totalMinutesには足さない
         todayWorkingMinutes = Math.floor((clockOutTimestamp - clockInTimestamp) / 60000);
-        // Fix: 安全策 - 1日の最大勤務時間（24時間）を超える場合は異常値とみなす
         const MAX_WORKING_MINUTES_PER_DAY = 24 * 60;
         if (todayWorkingMinutes > MAX_WORKING_MINUTES_PER_DAY) {
           console.warn('[TS-Assistant] todayWorkingMinutes exceeds 24h, likely stale timestamp:', todayWorkingMinutes);
@@ -704,8 +704,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         // TeamSpirit の totalHours に今日分が含まれている前提で、加算しない
         console.warn('[TS-Assistant] Clocked out but clockOutTimestamp is missing, relying on TeamSpirit totalHours');
       }
-      // totalMinutes への加算は null でない場合のみ
-      if (totalMinutes !== null && todayWorkingMinutes > 0) {
+      // totalMinutes への加算: 出勤中のみ（退勤済みはTeamSpiritのtotalHoursに当日分含む）
+      if (isWorking && totalMinutes !== null && todayWorkingMinutes > 0) {
         // 休憩控除: 6時間以上勤務の場合は1時間控除して totalMinutes に加算
         // todayWorkingMinutes 自体は変更しない（calculateOvertimeData内部で休憩控除するため）
         let todayNetMinutes = todayWorkingMinutes;
