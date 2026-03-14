@@ -107,26 +107,10 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
     dailyExcessLevel = 'normal';
   }
 
-  // 月末予測（8h超過累計ベース、リアルタイム）
-  // 今のペースで残業を続けた場合の月末予測
-  // = 8h超過累計（当日含む） + (残り勤務日数（当日除く） × 確定日の平均残業)
-  // 予測の乗数には確定日（当日除く）の平均を使用し、出勤直後の平均希薄化を防止
-  // 当日分は dailyExcessTotal に既に含まれるため、残り日数から当日を除外
-  const futureRemainingDays = Math.max(0, (todayWorkingMinutes > 0 && remainingDays > 0)
-    ? remainingDays - 1
-    : (remainingDays || 0));
-  // 予測レート: 常に確定日（当日除く）の平均残業を使用
-  // 出勤直後の希薄化防止: 当日分は含めない
-  let forecastRate;
-  if (baseCompletedDays > 0) {
-    forecastRate = Math.round(baseDailyOvertimeMinutes / baseCompletedDays);
-  } else if (todayExcess > 0) {
-    // 月初（確定日なし）: 当日の残業をベースに予測
-    forecastRate = todayExcess;
-  } else {
-    forecastRate = 0;
-  }
-  const forecastOvertime = dailyExcessTotal + (forecastRate * futureRemainingDays);
+  // 月末予測 = 残業/日（平均） × 月の全勤務日数
+  // 「このペースで残業を続けたら月末にこの残業時間になる」を表示
+  const totalExpectedDays = realTimeCompletedDays + Math.max(0, remainingDays || 0);
+  const forecastOvertime = avgOvertimePerDay * totalExpectedDays;
 
   // 月末予測の警告レベル
   let forecastLevel;
