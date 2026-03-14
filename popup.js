@@ -363,8 +363,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       holidayWorkMinutes += todayNetMinutes;
     }
 
-    // Calculate and update over/under hours (休日出勤除外)
-    const overUnderMinutes = (realTimeTotalMinutes - holidayWorkMinutes) - scheduledMinutes;
+    // Calculate and update over/under hours (休日出勤含む: 所定充足判定)
+    const overUnderMinutes = realTimeTotalMinutes - scheduledMinutes;
     const overUnderStr = formatMinutesToTime(overUnderMinutes);
     overUnderHoursEl.textContent = overUnderMinutes >= 0 ? `+${overUnderStr}` : overUnderStr;
 
@@ -766,10 +766,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const holidayWorkMinutesRaw = parseInt(summary.holidayWorkMinutes, 10);
     const holidayWorkMinutes = isNaN(holidayWorkMinutesRaw) ? 0 : holidayWorkMinutesRaw;
 
-    // Calculate and display over/under hours (平日勤務時間 - 所定労働時間)
-    // 休日出勤は所定外のため除外
+    // Calculate and display over/under hours (全労働時間 - 所定労働時間)
+    // 休日出勤も含む: 所定充足判定のため
     if (scheduledMinutes !== null && totalMinutes !== null) {
-      const overUnderMinutes = (totalMinutes - holidayWorkMinutes) - scheduledMinutes;
+      const overUnderMinutes = totalMinutes - scheduledMinutes;
       const overUnderStr = formatMinutesToTime(overUnderMinutes);
       overUnderHoursEl.textContent = overUnderMinutes >= 0 ? `+${overUnderStr}` : overUnderStr;
 

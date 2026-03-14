@@ -562,8 +562,8 @@
       }
 
       if (scheduledMinutes !== null && totalMinutes !== null) {
-        // 休日出勤は所定外のため除外
-        const overUnderMinutes = (currentTotalMinutes - holidayWorkMinutes) - scheduledMinutes;
+        // 過不足時間: 全労働時間 - 所定（休日出勤含む: 所定充足判定）
+        const overUnderMinutes = currentTotalMinutes - scheduledMinutes;
         overUnderEl.textContent = overUnderMinutes >= 0 ? `+${formatMinutesToTime(overUnderMinutes)}` : formatMinutesToTime(overUnderMinutes);
         overUnderEl.style.color = overUnderMinutes >= 0 ? '#0d904f' : '#d93025';
       }
