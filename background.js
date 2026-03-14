@@ -324,14 +324,14 @@ async function fetchAllAttendanceDataInternal() {
             foundAnyData = true;
           }
 
-          // 残り勤務日数を計算（今日以降の所定出勤日をカウント）
+          // 残り勤務日数を計算（明日以降の所定出勤日をカウント）
+          // 今日は realTimeCompletedDays に含まれるため、二重カウント防止
           let remainingWorkdays = 0;
           const todayDate = new Date(todayStr);
           for (const dateStr of Object.keys(result.monthlyData)) {
             const day = result.monthlyData[dateStr];
             const dayDate = new Date(dateStr);
-            // 今日以降の所定出勤日をカウント（今日を含む）
-            if (dayDate >= todayDate && !day.isHoliday) {
+            if (dayDate > todayDate && !day.isHoliday) {
               remainingWorkdays++;
             }
           }
