@@ -359,7 +359,8 @@ async function fetchAllAttendanceDataInternal() {
                 const parts = timeStr.split(':');
                 const hours = parseInt(parts[0], 10);
                 const minutes = parseInt(parts[1], 10);
-                if (isNaN(hours) || isNaN(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+                // TeamSpiritは24時超表記あり（24:30, 25:00等）→ 47時まで許容
+                if (isNaN(hours) || isNaN(minutes) || hours < 0 || hours > 47 || minutes < 0 || minutes > 59) return null;
                 return hours * 60 + minutes;
               };
               const clockInMinutes = parseTime(day.clockIn);
