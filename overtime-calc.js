@@ -80,11 +80,10 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
   // リアルタイム: 当日の超過分（todayExcess）を含む
   const dailyExcessTotal = realTimeDailyOvertimeMinutes;
 
-  // 月間残業（法的）= max(0, 平日勤務時間 - 月間所定労働時間)
-  // 休日出勤は36協定の45h上限対象外のため除外
-  // 所定未満の場合は0（マイナス表示しない）
+  // 月間残業 = max(0, 総労働時間 - 所定労働時間)
+  // フルフレックスでは休日出勤（所定休日）も含めた全労働時間で算出
   const legalOvertime = scheduledMinutes
-    ? Math.max(0, workdayTotalMinutes - scheduledMinutes)
+    ? Math.max(0, totalMinutes - scheduledMinutes)
     : 0;
 
   // 月間残業（法的）の警告レベル
