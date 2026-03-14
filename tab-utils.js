@@ -10,6 +10,16 @@ function isToday(timestamp) {
          date.getDate() === today.getDate();
 }
 
+// Check if timestamp is from a valid current work session
+// (today, or yesterday within 24 hours for overnight work)
+function isCurrentWorkSession(timestamp) {
+  if (!timestamp) return false;
+  if (isToday(timestamp)) return true;
+  // 深夜勤務対応: 24時間以内のタイムスタンプは有効とみなす
+  const elapsed = Date.now() - timestamp;
+  return elapsed > 0 && elapsed < 24 * 60 * 60 * 1000;
+}
+
 // Save clock-in timestamp (called when punching in via extension)
 async function saveClockInTime() {
   const now = Date.now();
@@ -50,6 +60,10 @@ async function fetchClockInTimeFromSite() {
     let clockInTimestamp = null;
     let clockOutTimestamp = null;
 
+    // 日跨ぎ判定閾値: 12時間以上未来の時刻のみ前日として扱う
+    // （早朝の数分差を誤補正しない。例: 0:10を0:05に見ても前日にならない）
+    const HALF_DAY_MS = 12 * 60 * 60 * 1000;
+
     if (data.clockInTime) {
       const parts = data.clockInTime.split(':');
       if (parts.length >= 2) {
@@ -59,9 +73,7 @@ async function fetchClockInTimeFromSite() {
         if (!isNaN(hours) && !isNaN(minutes)) {
           const d = new Date();
           d.setHours(hours, minutes, 0, 0);
-          // 日跨ぎ対応: 出勤時刻が現在より未来なら前日として扱う
-          // 例: 0:30に前日23:00の出勤データを取得した場合
-          if (d.getTime() > Date.now()) {
+          if (d.getTime() - Date.now() > HALF_DAY_MS) {
             d.setDate(d.getDate() - 1);
           }
           clockInTimestamp = d.getTime();
@@ -78,13 +90,17 @@ async function fetchClockInTimeFromSite() {
         if (!isNaN(hours) && !isNaN(minutes)) {
           const d = new Date();
           d.setHours(hours, minutes, 0, 0);
-          // 日跨ぎ対応: 退勤時刻が現在より未来なら前日として扱う
-          if (d.getTime() > Date.now()) {
+          if (d.getTime() - Date.now() > HALF_DAY_MS) {
             d.setDate(d.getDate() - 1);
           }
           clockOutTimestamp = d.getTime();
         }
       }
+    }
+
+    // 26時方式: 退勤が出勤より前なら翌日として扱う（夜勤の日跨ぎ対応）
+    if (clockInTimestamp && clockOutTimestamp && clockOutTimestamp < clockInTimestamp) {
+      clockOutTimestamp += 24 * 60 * 60 * 1000;
     }
 
     return {
@@ -239,7 +255,7 @@ async function waitForContentScript(tabId, maxRetries = 10) {
       });
 
       if (response && response.ready) {
-        return; // Content script is ready
+        return true; // Content script is ready
       }
     } catch (e) {
       // Ignore errors
@@ -267,7 +283,8 @@ async function waitForContentScript(tabId, maxRetries = 10) {
   }
 
   // Don't throw error - we have fallbacks with direct script execution
-  console.log('Content script not available, will use direct execution');
+  console.warn('[TS-Assistant] Content script not available after', maxRetries, 'retries, will use direct execution');
+  return false;
 }
 
 async function getPageInfo(tabId) {

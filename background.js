@@ -110,6 +110,25 @@ const ALL_DATA_CACHE_TTL = 30 * 1000; // 30秒
 let allDataFetchPromise = null;
 
 async function fetchAllAttendanceData() {
+  // 日付変更チェック: キャッシュが前日のデータなら無効化
+  if (allDataCache && allDataCacheTime > 0) {
+    const cacheDate = new Date(allDataCacheTime);
+    const now = new Date();
+    if (cacheDate.getDate() !== now.getDate() ||
+        cacheDate.getMonth() !== now.getMonth() ||
+        cacheDate.getFullYear() !== now.getFullYear()) {
+      console.log('[TS-Assistant] 日付変更を検出、キャッシュを無効化');
+      allDataCache = null;
+      allDataCacheTime = 0;
+      // ストレージの古いデータもクリア
+      await chrome.storage.local.remove([
+        'attendanceData', 'lastFetched', 'clockInTimestamp',
+        'clockOutTimestamp', 'hasClockedOut', 'workSummary',
+        'lastPunchTime', 'lastPunchAction'
+      ]);
+    }
+  }
+
   // キャッシュが有効な場合はそれを返す
   if (allDataCache && (Date.now() - allDataCacheTime) < ALL_DATA_CACHE_TTL) {
     console.log('[TS-Assistant] 全データをキャッシュから取得');
@@ -233,10 +252,11 @@ async function fetchAllAttendanceDataInternal() {
 
               const row = clockInEl.closest('tr');
               if (row) {
-                // 退勤時刻セレクタ（フォールバック付き）
-                const clockOutEl = row.querySelector('td.vet, td.dval.vet, td[data-field="endTime"], td.endTime');
+                // 退勤時刻: IDベースで取得（出勤と同じ方式で確実に取得）
+                const clockOutEl = document.getElementById(`ttvTimeEt${dateStr}`) ||
+                                   row.querySelector('td.vet, td.dval.vet, td[data-field="endTime"], td.endTime');
                 if (!clockOutEl) {
-                  console.warn('[TS-Assistant] 退勤時刻セレクタが見つかりません:', dateStr);
+                  console.warn('[TS-Assistant] 退勤時刻が見つかりません:', dateStr);
                 }
                 if (clockOutEl) {
                   const outText = clockOutEl.textContent?.trim();
@@ -308,6 +328,8 @@ async function fetchAllAttendanceDataInternal() {
           // 退勤打刻済み日数と日次残業合計を計算（当日は除外）
           let completedDays = 0;
           let totalDailyOvertimeMinutes = 0;
+          let holidayWorkDays = 0;
+          let holidayWorkMinutes = 0;
           const STANDARD_MINUTES_PER_DAY = 8 * 60; // 8時間 = 480分
           const BREAK_MINUTES = 60; // 休憩1時間
 
@@ -320,8 +342,6 @@ async function fetchAllAttendanceDataInternal() {
             const day = result.monthlyData[dateStr];
             // 退勤打刻がある日のみカウント（確定した勤務日）
             if (day.clockIn && day.clockOut) {
-              completedDays++;
-
               // 勤務時間を計算（clockOut - clockIn - 休憩）
               const parseTime = (timeStr) => {
                 // 入力検証: 空文字・null・不正形式をチェック
@@ -352,14 +372,23 @@ async function fetchAllAttendanceDataInternal() {
                 workingMinutes -= BREAK_MINUTES;
               }
 
-              // 日次残業 = max(0, 勤務時間 - 8時間)
-              // 8時間未満の日は0として扱う（マイナスにしない）
-              const dailyOvertime = Math.max(0, workingMinutes - STANDARD_MINUTES_PER_DAY);
-              totalDailyOvertimeMinutes += dailyOvertime;
+              // 休日出勤は別カウントに分離
+              if (day.isHoliday) {
+                holidayWorkDays++;
+                holidayWorkMinutes += workingMinutes;
+              } else {
+                completedDays++;
+                // 日次残業 = max(0, 勤務時間 - 8時間)
+                // 8時間未満の日は0として扱う（マイナスにしない）
+                const dailyOvertime = Math.max(0, workingMinutes - STANDARD_MINUTES_PER_DAY);
+                totalDailyOvertimeMinutes += dailyOvertime;
+              }
             }
           }
           result.completedDays = completedDays;
           result.totalDailyOvertimeMinutes = totalDailyOvertimeMinutes;
+          result.holidayWorkDays = holidayWorkDays;
+          result.holidayWorkMinutes = holidayWorkMinutes;
 
           result.success = foundAnyData;
           return result;
@@ -384,15 +413,43 @@ async function fetchAllAttendanceDataInternal() {
         console.log('[TS-Assistant] 全データ取得完了');
 
         const data = r.result;
+
+        // 日跨ぎセッション検出: 今日の出勤データがないが、前日から継続勤務中の場合を補完
+        if (data.todayData && !data.todayData.clockInTime) {
+          const stored = await chrome.storage.local.get(['clockInTimestamp', 'hasClockedOut']);
+          if (stored.clockInTimestamp && !stored.hasClockedOut) {
+            const elapsed = Date.now() - stored.clockInTimestamp;
+            const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+            if (elapsed > 0 && elapsed < TWENTY_FOUR_HOURS) {
+              // clockInTimestamp から前日の日付文字列を生成
+              const yesterdayDate = new Date(stored.clockInTimestamp);
+              const yesterdayStr = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, '0')}-${String(yesterdayDate.getDate()).padStart(2, '0')}`;
+              const yesterdayData = data.monthlyData[yesterdayStr];
+              if (yesterdayData && yesterdayData.clockIn) {
+                console.log('[TS-Assistant] 日跨ぎセッション検出: 前日(' + yesterdayStr + ')の出勤を引き継ぎ');
+                data.todayData.clockInTime = yesterdayData.clockIn;
+                data.todayData.isWorking = true;
+              }
+            }
+          }
+        }
+
         let clockInTimestamp = null;
         let clockOutTimestamp = null;
 
         // todayDataにtimestampを追加
+        // 日跨ぎ判定閾値: 12時間以上未来の時刻のみ前日として扱う
+        // （早朝の数分差を誤補正しない。例: 0:10を0:05に見ても前日にならない）
+        const HALF_DAY_MS = 12 * 60 * 60 * 1000;
+
         if (data.todayData?.clockInTime) {
           const parts = data.todayData.clockInTime.split(':');
           if (parts.length >= 2) {
             const d = new Date();
             d.setHours(parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
+            if (d.getTime() - Date.now() > HALF_DAY_MS) {
+              d.setDate(d.getDate() - 1);
+            }
             clockInTimestamp = d.getTime();
           }
         }
@@ -402,8 +459,16 @@ async function fetchAllAttendanceDataInternal() {
           if (parts.length >= 2) {
             const d = new Date();
             d.setHours(parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
+            if (d.getTime() - Date.now() > HALF_DAY_MS) {
+              d.setDate(d.getDate() - 1);
+            }
             clockOutTimestamp = d.getTime();
           }
+        }
+
+        // 26時方式: 退勤が出勤より前なら翌日として扱う（夜勤の日跨ぎ対応）
+        if (clockInTimestamp && clockOutTimestamp && clockOutTimestamp < clockInTimestamp) {
+          clockOutTimestamp += 24 * 60 * 60 * 1000;
         }
 
         // remainingWorkdays, completedDays, totalDailyOvertimeMinutesをsummaryに追加
@@ -411,23 +476,69 @@ async function fetchAllAttendanceDataInternal() {
           data.summary.remainingWorkdays = data.remainingWorkdays;
           data.summary.completedDays = data.completedDays;
           data.summary.totalDailyOvertimeMinutes = data.totalDailyOvertimeMinutes;
+          data.summary.holidayWorkDays = data.holidayWorkDays;
+          data.summary.holidayWorkMinutes = data.holidayWorkMinutes;
         }
         // todayData.summaryにも追加（content.jsで使用）
         if (data.todayData && data.todayData.summary) {
           data.todayData.summary.remainingWorkdays = data.remainingWorkdays;
           data.todayData.summary.completedDays = data.completedDays;
           data.todayData.summary.totalDailyOvertimeMinutes = data.totalDailyOvertimeMinutes;
+          data.todayData.summary.holidayWorkDays = data.holidayWorkDays;
+          data.todayData.summary.holidayWorkMinutes = data.holidayWorkMinutes;
         }
 
         // Save to unified storage
-        await chrome.storage.local.set({
+        // punch.js が設定した状態を保護する（アクションベース + 時間ベースの二重保護）
+        const existing = await chrome.storage.local.get(['clockInTimestamp', 'clockOutTimestamp', 'lastPunchTime', 'lastPunchAction']);
+        // 直近の打刻操作（60秒以内）: タイムスタンプの精度保護
+        const recentPunch = existing.lastPunchTime && (Date.now() - existing.lastPunchTime < 60000);
+        // 最後の打刻が出勤: 再出勤後の状態巻き戻し防止
+        // 24時間有効期限: Service Worker再起動で日境界クリーンアップがスキップされた場合のフォールバック
+        const lastActionIsClockIn = existing.lastPunchAction === 'clockIn'
+          && existing.lastPunchTime
+          && (Date.now() - existing.lastPunchTime < 24 * 60 * 60 * 1000);
+
+        const storageUpdate = {
           attendanceData: data.todayData,
           lastFetched: Date.now(),
-          clockInTimestamp: clockInTimestamp,
-          clockOutTimestamp: clockOutTimestamp,
-          hasClockedOut: !!data.todayData?.clockOutTime,
           workSummary: data.summary
-        });
+        };
+
+        // hasClockedOut: 出勤打刻後はAPIの退勤時刻が打刻後の新しいものの場合のみ反映
+        // （再出勤後に旧退勤時刻で巻き戻されるのを防止）
+        const apiHasClockedOut = !!data.todayData?.clockOutTime;
+        if (lastActionIsClockIn) {
+          // APIの退勤時刻が出勤打刻より後の場合のみ反映（WebサイトやAPIでの退勤を検知）
+          if (apiHasClockedOut && clockOutTimestamp && clockOutTimestamp > existing.lastPunchTime) {
+            storageUpdate.hasClockedOut = true;
+          }
+        } else if (!recentPunch) {
+          storageUpdate.hasClockedOut = apiHasClockedOut;
+        }
+
+        // clockInTimestamp: 出勤打刻後はpunch.jsの精度の高いタイムスタンプを保護
+        if (lastActionIsClockIn) {
+          // punch.js が設定した Date.now() 精度のタイムスタンプを保護
+          // （APIは分単位精度のため上書きしない）
+        } else if (!recentPunch && clockInTimestamp) {
+          storageUpdate.clockInTimestamp = clockInTimestamp;
+        } else if (!existing.clockInTimestamp && clockInTimestamp) {
+          storageUpdate.clockInTimestamp = clockInTimestamp;
+        }
+
+        // clockOutTimestamp: 出勤打刻後はAPIの退勤時刻が打刻後の新しいものの場合のみ反映
+        if (lastActionIsClockIn) {
+          if (clockOutTimestamp && clockOutTimestamp > existing.lastPunchTime) {
+            storageUpdate.clockOutTimestamp = clockOutTimestamp;
+          }
+        } else if (!recentPunch && clockOutTimestamp) {
+          storageUpdate.clockOutTimestamp = clockOutTimestamp;
+        } else if (!existing.clockOutTimestamp && clockOutTimestamp) {
+          storageUpdate.clockOutTimestamp = clockOutTimestamp;
+        }
+
+        await chrome.storage.local.set(storageUpdate);
 
         // キャッシュに保存
         allDataCache = data;

@@ -11,6 +11,19 @@ async function sendPunchCommand(tabId, action, location) {
         logs.push(`Frame: ${window === window.top ? 'main' : 'iframe'}`);
         logs.push(`URL: ${window.location.href}`);
 
+        // Detect login page (session expired) - main frame only
+        // Salesforce iframes (my.salesforce.com) may falsely match URL patterns
+        if (window === window.top) {
+          const isLoginPage = !!document.getElementById('username') ||
+                              !!document.querySelector('input[name="username"]') ||
+                              window.location.href.includes('/login') ||
+                              (window.location.href.includes('my.salesforce.com') && !window.location.href.includes('lightning'));
+          if (isLoginPage) {
+            logs.push('Login page detected - session expired');
+            return { success: false, sessionExpired: true, logs: logs.join('\n') };
+          }
+        }
+
         // Location mapping
         const LOCATION_MAP = {
           'remote': 'リモート',
@@ -155,6 +168,14 @@ async function sendPunchCommand(tabId, action, location) {
           // Found and clicked - this is what we want
           bestResult = frameResult.result;
           break;
+        } else if (frameResult.result.sessionExpired) {
+          // Session expired detected - return immediately
+          return {
+            success: false,
+            error: 'セッションが切れています。再ログインしてください。',
+            sessionExpired: true,
+            logs: allLogs.join('\n---\n')
+          };
         } else if (!frameResult.result.notFound) {
           // Button was found but there was an error (like disabled)
           bestResult = frameResult.result;
@@ -177,7 +198,13 @@ async function sendPunchCommand(tabId, action, location) {
   }
 }
 
+let _punchInProgress = false;
+
 async function performPunch(action, location) {
+  // 排他制御: 二重打刻防止
+  if (_punchInProgress) return;
+  _punchInProgress = true;
+
   const { clockInBtn, clockOutBtn, showMessage, showStatus,
           updateButtonStates, showTimeSection, displaySummary,
           startTimeUpdates, loadMissedPunchData, updateTimeDisplayFinal,
@@ -197,6 +224,18 @@ async function performPunch(action, location) {
     const savedPassword = encryptedPassword ? await decryptPassword(encryptedPassword) : null;
 
     let tab = await findTeamSpiritTab();
+
+    // Verify existing tab is still on a valid TeamSpirit page (not redirected to login)
+    if (tab) {
+      try {
+        const pageInfo = await getPageInfo(tab.id);
+        if (pageInfo.isLoginPage) {
+          tab = null; // Session expired - will auto-open and login below
+        }
+      } catch (e) {
+        tab = null; // Tab might be invalid
+      }
+    }
 
     if (!tab) {
       // Open TeamSpirit in background
@@ -240,8 +279,15 @@ async function performPunch(action, location) {
       if (action === 'clockIn') {
         showStatus('出勤中', 'working');
         updateButtonStates('working');
-        // Save clock-in timestamp locally
-        await saveClockInTime();
+        // 出勤状態を一括設定（中間状態の露出を最小化）
+        const now = Date.now();
+        await chrome.storage.local.set({
+          clockInTimestamp: now,
+          hasClockedOut: false,
+          lastPunchTime: now,
+          lastPunchAction: 'clockIn'
+        });
+        await chrome.storage.local.remove(['clockOutTimestamp']);
         showTimeSection();
 
         // キャッシュ無効化後、サマリーデータを再取得して表示
@@ -260,15 +306,25 @@ async function performPunch(action, location) {
         // Get clock-in timestamp and set clock-out timestamp
         const stored = await chrome.storage.local.get('clockInTimestamp');
         const clockOutTimestamp = Date.now();
-        await chrome.storage.local.set({ hasClockedOut: true, clockOutTimestamp: clockOutTimestamp });
+        await chrome.storage.local.set({ hasClockedOut: true, clockOutTimestamp: clockOutTimestamp, lastPunchTime: Date.now(), lastPunchAction: 'clockOut' });
         // Show final time display (this also stops the interval)
         if (stored.clockInTimestamp) {
           updateTimeDisplayFinal(stored.clockInTimestamp, clockOutTimestamp);
         }
 
-        // キャッシュを無効化してから打刻漏れデータを再取得
+        // キャッシュを無効化してから、遅延付きでデータを再取得
+        // TeamSpiritのサーバー反映ラグ（1-2秒）を考慮して2秒待機
         chrome.runtime.sendMessage({ type: 'INVALIDATE_CACHE' }, () => {
           loadMissedPunchData();
+          setTimeout(() => {
+            chrome.runtime.sendMessage({ type: 'INVALIDATE_CACHE' }, () => {
+              fetchClockInTimeFromSite().then((fetchResult) => {
+                if (fetchResult && fetchResult.summary) {
+                  displaySummary(fetchResult.summary, false, stored.clockInTimestamp, clockOutTimestamp);
+                }
+              });
+            });
+          }, 2000);
         });
       }
 
@@ -304,7 +360,8 @@ async function performPunch(action, location) {
     const errorRecovery = await chrome.storage.local.get(
       ['clockInTimestamp', 'hasClockedOut']
     );
-    if (errorRecovery.clockInTimestamp && !errorRecovery.hasClockedOut) {
+    // isCurrentWorkSession()で有効なセッションかチェック（staleなタイムスタンプ防止）
+    if (errorRecovery.clockInTimestamp && !errorRecovery.hasClockedOut && isCurrentWorkSession(errorRecovery.clockInTimestamp)) {
       updateButtonStates('working');
     } else if (errorRecovery.hasClockedOut) {
       updateButtonStates('clocked-out');
@@ -313,5 +370,6 @@ async function performPunch(action, location) {
     }
   } finally {
     btn.classList.remove('loading');
+    _punchInProgress = false;
   }
 }

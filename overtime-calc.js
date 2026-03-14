@@ -9,26 +9,43 @@
 function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes) {
   const STANDARD_HOURS_PER_DAY = CONFIG.STANDARD_HOURS_PER_DAY;
   const OVERTIME_LIMIT = CONFIG.OVERTIME_LIMIT;
+  const BREAK_MINUTES = 60; // 休憩1時間
 
   // actualDaysが0の場合は1として扱う（0除算防止、月初め対応）
   const safeActualDays = actualDays > 0 ? actualDays : 1;
 
-  // 退勤打刻済み日数（completedDaysがない場合はactualDaysで代用）
-  const safeCompletedDays = (completedDays && completedDays > 0) ? completedDays : safeActualDays;
+  // 当日の8h超過分をリアルタイム算出
+  // todayWorkingMinutes は出勤時刻からの経過時間（休憩未控除）
+  // 6時間以上勤務なら1時間の休憩を控除して実勤務時間を算出
+  let todayNetWorkingMinutes = todayWorkingMinutes || 0;
+  if (todayNetWorkingMinutes >= 6 * 60) {
+    todayNetWorkingMinutes -= BREAK_MINUTES;
+  }
+  const todayExcess = Math.max(0, todayNetWorkingMinutes - STANDARD_HOURS_PER_DAY);
 
-  // 平均/日（確定分、退勤打刻済み日数で計算）
+  // 当日分を含めた8h超過累計（リアルタイム）
+  const baseDailyOvertimeMinutes = (totalDailyOvertimeMinutes !== undefined &&
+    totalDailyOvertimeMinutes !== null && !isNaN(totalDailyOvertimeMinutes))
+    ? totalDailyOvertimeMinutes : 0;
+  const realTimeDailyOvertimeMinutes = baseDailyOvertimeMinutes + todayExcess;
+
+  // 当日を含めた勤務日数（出勤中 or 当日勤務実績がある場合 +1）
+  const baseCompletedDays = (completedDays && completedDays > 0) ? completedDays : 0;
+  const realTimeCompletedDays = (todayWorkingMinutes > 0)
+    ? baseCompletedDays + 1
+    : baseCompletedDays;
+
+  // 退勤打刻済み日数（当日含む、0除算防止）
+  const safeCompletedDays = realTimeCompletedDays > 0 ? realTimeCompletedDays : safeActualDays;
+
+  // 平均/日（確定分 + 当日分、退勤打刻済み日数で計算）
   const avgMinutesPerDay = Math.round(totalMinutes / safeCompletedDays);
 
-  // 残業/日の計算（新方式）
-  // = 日次残業の合計 ÷ 退勤打刻済み日数
-  // 各日の(勤務時間 - 8時間)を合算した値を使用
+  // 残業/日の計算（当日分を含むリアルタイム計算）
+  // = 日次残業の合計（当日含む） ÷ 勤務日数（当日含む）
   let avgOvertimePerDay;
-  if (totalDailyOvertimeMinutes !== undefined &&
-      totalDailyOvertimeMinutes !== null &&
-      !isNaN(totalDailyOvertimeMinutes) &&
-      safeCompletedDays > 0) {
-    // 新方式: 日次残業合計 ÷ 勤務日数
-    avgOvertimePerDay = Math.round(totalDailyOvertimeMinutes / safeCompletedDays);
+  if (safeCompletedDays > 0) {
+    avgOvertimePerDay = Math.round(realTimeDailyOvertimeMinutes / safeCompletedDays);
   } else {
     // フォールバック: 従来方式（平均勤務時間 - 8時間）
     avgOvertimePerDay = avgMinutesPerDay - STANDARD_HOURS_PER_DAY;
@@ -46,11 +63,10 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
     avgOvertimeLevel = 'safe';
   }
 
-  // 8h超過累計（健康管理指標）= 日次残業（8時間超過分）の合計
+  // 8h超過累計（健康管理指標）= 日次残業（8時間超過分）の合計 + 当日超過分
   // 各日について8時間を超えた分のみを加算、8時間未満の日は0
-  const dailyExcessTotal = (totalDailyOvertimeMinutes !== undefined && totalDailyOvertimeMinutes !== null)
-    ? totalDailyOvertimeMinutes
-    : 0;
+  // リアルタイム: 当日の超過分（todayExcess）を含む
+  const dailyExcessTotal = realTimeDailyOvertimeMinutes;
 
   // 月間残業（法的）= max(0, 総勤務時間 - 月間所定労働時間)
   // 所定未満の場合は0（マイナス表示しない）
@@ -78,10 +94,26 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
     dailyExcessLevel = 'normal';
   }
 
-  // 月末予測（8h超過累計ベース）
+  // 月末予測（8h超過累計ベース、リアルタイム）
   // 今のペースで残業を続けた場合の月末予測
-  // = 8h超過累計 + (残り勤務日数 × 残業/日)
-  const forecastOvertime = dailyExcessTotal + (avgOvertimePerDay * (remainingDays || 0));
+  // = 8h超過累計（当日含む） + (残り勤務日数（当日除く） × 確定日の平均残業)
+  // 予測の乗数には確定日（当日除く）の平均を使用し、出勤直後の平均希薄化を防止
+  // 当日分は dailyExcessTotal に既に含まれるため、残り日数から当日を除外
+  const futureRemainingDays = (todayWorkingMinutes > 0 && remainingDays > 0)
+    ? remainingDays - 1
+    : (remainingDays || 0);
+  // 予測レート: 常に確定日（当日除く）の平均残業を使用
+  // 出勤直後の希薄化防止: 当日分は含めない
+  let forecastRate;
+  if (baseCompletedDays > 0) {
+    forecastRate = Math.round(baseDailyOvertimeMinutes / baseCompletedDays);
+  } else if (todayExcess > 0) {
+    // 月初（確定日なし）: 当日の残業をベースに予測
+    forecastRate = todayExcess;
+  } else {
+    forecastRate = 0;
+  }
+  const forecastOvertime = dailyExcessTotal + (forecastRate * futureRemainingDays);
 
   // 月末予測の警告レベル
   let forecastLevel;
@@ -112,14 +144,16 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
     legalOvertime,
     legalOvertimeLevel,
     legalOvertimeHours,
-    // 8h超過累計（健康管理指標）
+    // 8h超過累計（健康管理指標、当日分含むリアルタイム値）
     dailyExcessTotal,
     dailyExcessLevel,
-    // 月末予測
+    // 月末予測（リアルタイム）
     forecastOvertime,
     forecastLevel,
     alertText,
     badgeText,
+    // 勤務日数（当日含むリアルタイム値）
+    realTimeCompletedDays,
     // 後方互換性のため残す
     monthlyOvertime: legalOvertime,
     monthlyOvertimeLevel: legalOvertimeLevel,

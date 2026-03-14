@@ -514,6 +514,10 @@
             <span style="color:#666;">勤務日数</span>
             <span style="font-weight:600;" id="ts-actual-days">--日</span>
           </div>
+          <div id="ts-holiday-work-row" style="display:none; justify-content:space-between; margin-bottom:3px; gap:10px;">
+            <span style="color:#666;">うち休日出勤</span>
+            <span style="font-weight:600; color:#ea8600;" id="ts-holiday-work-info">--</span>
+          </div>
           <div style="display:flex; justify-content:space-between; margin-bottom:3px; gap:10px;">
             <span style="color:#666;">勤務時間</span>
             <span style="font-weight:600;" id="ts-actual-hours">--:--</span>
@@ -658,23 +662,45 @@
       let currentTotalMinutes = totalMinutes || 0;
       let todayWorkingMinutes = 0;
       // 本日分勤務時間の加算
-      // TeamSpiritのtotalHoursは前日までの累計（本日分を含まない）前提
-      // 出勤中の場合のみ、リアルタイムで本日分を加算する
-      // 退勤済みの場合、TeamSpiritの値に既に本日分が含まれている可能性があるため加算しない
-      if (data.clockInTime && totalMinutes !== null && data.isWorking) {
-        const clockInDate = parseTimeToDate(data.clockInTime);
-        if (clockInDate) {
-          // 日跨ぎ対応: 出勤時刻が現在時刻より後なら前日として扱う
-          const now = new Date();
-          if (clockInDate > now) {
-            clockInDate.setDate(clockInDate.getDate() - 1);
+      // TeamSpiritのtotalHoursは前日までの累計（本日分を含まない）
+      // 出勤中・退勤済みの両方で本日分を加算する
+      const MAX_WORKING_MINUTES = 24 * 60;
+      if (data.clockInTime && totalMinutes !== null) {
+        if (data.isWorking) {
+          // 出勤中: 出勤時刻〜現在のリアルタイム計算
+          const clockInDate = parseTimeToDate(data.clockInTime);
+          if (clockInDate) {
+            const now = new Date();
+            if (clockInDate > now) {
+              clockInDate.setDate(clockInDate.getDate() - 1);
+            }
+            todayWorkingMinutes = Math.floor((Date.now() - clockInDate.getTime()) / 60000);
+            if (todayWorkingMinutes > 0 && todayWorkingMinutes < MAX_WORKING_MINUTES) {
+              // 休憩控除: 6時間以上勤務の場合は1時間控除して totalMinutes に加算
+              let todayNetMinutes = todayWorkingMinutes;
+              if (todayNetMinutes >= 6 * 60) {
+                todayNetMinutes -= 60;
+              }
+              currentTotalMinutes += todayNetMinutes;
+            }
           }
-          // Currently working: add time from clock-in to now
-          todayWorkingMinutes = Math.floor((Date.now() - clockInDate.getTime()) / 60000);
-          // 異常値チェック（24時間超過は異常）
-          const MAX_WORKING_MINUTES = 24 * 60;
-          if (todayWorkingMinutes > 0 && todayWorkingMinutes < MAX_WORKING_MINUTES) {
-            currentTotalMinutes += todayWorkingMinutes;
+        } else if (data.clockOutTime) {
+          // 退勤済み: 出勤時刻〜退勤時刻で確定計算
+          const clockInDate = parseTimeToDate(data.clockInTime);
+          const clockOutDate = parseTimeToDate(data.clockOutTime);
+          if (clockInDate && clockOutDate) {
+            if (clockOutDate < clockInDate) {
+              clockOutDate.setDate(clockOutDate.getDate() + 1);
+            }
+            todayWorkingMinutes = Math.floor((clockOutDate.getTime() - clockInDate.getTime()) / 60000);
+            if (todayWorkingMinutes > 0 && todayWorkingMinutes < MAX_WORKING_MINUTES) {
+              // 休憩控除: 6時間以上勤務の場合は1時間控除して totalMinutes に加算
+              let todayNetMinutes = todayWorkingMinutes;
+              if (todayNetMinutes >= 6 * 60) {
+                todayNetMinutes -= 60;
+              }
+              currentTotalMinutes += todayNetMinutes;
+            }
           }
         }
       }
@@ -767,8 +793,8 @@
     const overtimeForecastEl = infoPanel.querySelector('#ts-overtime-forecast');
     const overtimeAlertEl = infoPanel.querySelector('#ts-overtime-alert');
 
-    // 勤務日数（completedDays = 退勤打刻済み日数を使用）
-    actualDaysEl.textContent = `${completedDays}日`;
+    // 勤務日数（当日含むリアルタイム値を使用）
+    actualDaysEl.textContent = `${data.realTimeCompletedDays}日`;
 
     // 勤務時間（リアルタイム）
     actualHoursEl.textContent = formatMinutesToTime(currentTotalMinutes);
@@ -815,16 +841,50 @@
       overtimeForecastEl.style.color = '#0d904f';
       overtimeAlertEl.style.display = 'none';
     }
+
+    // 休日出勤表示
+    const holidayWorkRow = infoPanel.querySelector('#ts-holiday-work-row');
+    const holidayWorkInfoEl = infoPanel.querySelector('#ts-holiday-work-info');
+    if (holidayWorkRow && holidayWorkInfoEl) {
+      const hwDays = parseInt(summary.holidayWorkDays, 10);
+      const hwMinutes = parseInt(summary.holidayWorkMinutes, 10);
+      if (!isNaN(hwDays) && hwDays > 0) {
+        holidayWorkRow.style.display = 'flex';
+        holidayWorkInfoEl.textContent = `${hwDays}日 (${formatMinutesToTime(hwMinutes)})`;
+      } else {
+        holidayWorkRow.style.display = 'none';
+      }
+    }
   }
 
   // ==================== Panel Common ====================
 
   // パネル初期化後の共通処理（データ読み込み・タイマー開始）
   function initPanelData() {
-    loadData().then(() => updateDisplay());
+    loadData().then(() => {
+      // 日跨ぎ対応: 有効なセッションがあれば cachedData を補正
+      if (chrome.runtime?.id) {
+        chrome.storage.local.get(['clockInTimestamp', 'hasClockedOut'], (stored) => {
+          if (stored.clockInTimestamp && !stored.hasClockedOut) {
+            const elapsed = Date.now() - stored.clockInTimestamp;
+            if (elapsed > 0 && elapsed < 24 * 60 * 60 * 1000) {
+              if (cachedData && !cachedData.clockInTime) {
+                const clockInDate = new Date(stored.clockInTimestamp);
+                cachedData.isWorking = true;
+                cachedData.clockInTime = `${String(clockInDate.getHours()).padStart(2, '0')}:${String(clockInDate.getMinutes()).padStart(2, '0')}`;
+                cachedData.clockOutTime = null;
+                console.log('[TS-Assistant] 日跨ぎセッション検出: cachedData補正', cachedData.clockInTime);
+              }
+            }
+          }
+          updateDisplay();
+        });
+      } else {
+        updateDisplay();
+      }
+    });
     loadTodayWorkday();
     loadMissedPunchData();
-
     // 既存のタイマーをクリアしてから新規作成
     if (updateIntervalId) {
       clearInterval(updateIntervalId);
@@ -994,8 +1054,10 @@
       findAndInjectPanelInMainFrame();
     }
 
-    // 初回挿入（2秒後）
-    setTimeout(tryInjectPanel, 2000);
+    // 初回挿入（2秒後、ホーム画面のみ）
+    if (location.href.includes('/lightning/page/home')) {
+      setTimeout(tryInjectPanel, 2000);
+    }
 
     // URL変更を監視（SPA対応）
     let lastUrl = location.href;
@@ -1036,6 +1098,24 @@
           cachedData = changes.attendanceData.newValue;
           updateDisplay();
         }
+        // 出勤状態の変更を監視（ポップアップからの出勤打刻を即時反映）
+        if (changes.hasClockedOut && changes.hasClockedOut.newValue === false) {
+          chrome.storage.local.get(['clockInTimestamp'], (result) => {
+            if (cachedData && result.clockInTimestamp) {
+              cachedData.isWorking = true;
+              const clockInDate = new Date(result.clockInTimestamp);
+              cachedData.clockInTime = `${String(clockInDate.getHours()).padStart(2, '0')}:${String(clockInDate.getMinutes()).padStart(2, '0')}`;
+              cachedData.clockOutTime = null;
+              updateDisplay();
+
+              // 出勤後: フル更新intervalに復帰（退勤後の軽量intervalを解除）
+              if (updateIntervalId) {
+                clearInterval(updateIntervalId);
+              }
+              updateIntervalId = setInterval(updateDisplay, 1000);
+            }
+          });
+        }
         // 退勤状態の変更を監視（ポップアップからの退勤打刻を即時反映）
         if (changes.hasClockedOut && changes.hasClockedOut.newValue === true) {
           chrome.storage.local.get(['clockInTimestamp', 'clockOutTimestamp'], (result) => {
@@ -1044,6 +1124,19 @@
               const clockOutDate = new Date(result.clockOutTimestamp);
               cachedData.clockOutTime = `${String(clockOutDate.getHours()).padStart(2, '0')}:${String(clockOutDate.getMinutes()).padStart(2, '0')}`;
               updateDisplay();
+
+              // 退勤後: 毎秒フル更新を停止し、現在時刻のみ更新する軽量intervalに切替
+              if (updateIntervalId) {
+                clearInterval(updateIntervalId);
+                updateIntervalId = setInterval(() => {
+                  if (!infoPanel) return;
+                  const el = infoPanel.querySelector('#ts-current-time');
+                  if (el) {
+                    const now = new Date();
+                    el.textContent = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+                  }
+                }, 1000);
+              }
             }
           });
         }

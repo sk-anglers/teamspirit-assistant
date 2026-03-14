@@ -314,8 +314,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Update working time if clocked in (and not clocked out), and update summary in real-time
     chrome.storage.local.get(['clockInTimestamp', 'workSummary', 'hasClockedOut'], (result) => {
-      // Fix: clockInTimestamp が今日の日付かどうかを検証（古いタイムスタンプによる異常値防止）
-      if (result.clockInTimestamp && !result.hasClockedOut && isToday(result.clockInTimestamp)) {
+      // Fix: clockInTimestamp が有効なワークセッションかどうかを検証（深夜勤務対応）
+      if (result.clockInTimestamp && !result.hasClockedOut && isCurrentWorkSession(result.clockInTimestamp)) {
         const clockInDate = new Date(result.clockInTimestamp);
         clockInTimeEl.textContent = formatTimeShort(clockInDate);
 
@@ -344,7 +344,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Add today's working time to base total
     const todayWorkingMinutes = Math.floor(todayWorkingMs / 60000);
-    const realTimeTotalMinutes = baseTotalMinutes + todayWorkingMinutes;
+    // 休憩控除: 6時間以上勤務の場合は1時間控除して totalMinutes に加算
+    let todayNetMinutes = todayWorkingMinutes;
+    if (todayNetMinutes >= 6 * 60) {
+      todayNetMinutes -= 60;
+    }
+    const realTimeTotalMinutes = baseTotalMinutes + todayNetMinutes;
 
     // Update total hours display
     totalHoursEl.textContent = formatMinutesToTime(realTimeTotalMinutes);
@@ -375,8 +380,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const remainingDays = !isNaN(remainingWorkdays) ? remainingWorkdays : (scheduledDays - actualDays);
 
     // 退勤打刻済み日数と日次残業合計を取得（残業/日の計算に使用）
-    const completedDays = parseInt(summary.completedDays, 10);
-    const totalDailyOvertimeMinutes = parseInt(summary.totalDailyOvertimeMinutes, 10);
+    // NaNチェック: parseIntが失敗した場合は0として扱う
+    const completedDaysRaw = parseInt(summary.completedDays, 10);
+    const completedDays = isNaN(completedDaysRaw) ? 0 : completedDaysRaw;
+    const totalDailyOvertimeRaw = parseInt(summary.totalDailyOvertimeMinutes, 10);
+    const totalDailyOvertimeMinutes = isNaN(totalDailyOvertimeRaw) ? 0 : totalDailyOvertimeRaw;
 
     let requiredMinutesPerDay = 0;
 
@@ -421,9 +429,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   function updateOvertimeSectionRealTime(totalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes) {
     const data = calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes);
 
-    // 勤務日数（completedDays: 退勤打刻済み日数を使用）
-    const displayDays = (!isNaN(completedDays) && completedDays > 0) ? completedDays : 0;
-    actualDaysEl.textContent = `${displayDays}日`;
+    // 勤務日数（当日含むリアルタイム値を使用）
+    actualDaysEl.textContent = `${data.realTimeCompletedDays}日`;
 
     // 勤務時間（リアルタイム）
     actualHoursEl.textContent = formatMinutesToTime(totalMinutes);
@@ -507,6 +514,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Update time display for clocked-out state (final, fixed values)
   function updateTimeDisplayFinal(clockInTs, clockOutTs) {
+    // まず既存のintervalを確実に停止（二重起動防止）
+    stopTimeUpdates();
+
     // Show current time (still updating)
     currentTimeEl.textContent = formatTime(new Date());
 
@@ -526,10 +536,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const workingMs = clockOutTs - clockInTs;
     workingTimeEl.textContent = formatDuration(workingMs);
 
-    // Start interval just for current time
-    if (timeUpdateInterval) {
-      clearInterval(timeUpdateInterval);
-    }
+    // Start lightweight interval just for current time
     timeUpdateInterval = setInterval(() => {
       currentTimeEl.textContent = formatTime(new Date());
     }, 1000);
@@ -556,16 +563,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Check and initialize time display based on stored data
   async function initializeTimeDisplay(isWorkingHint) {
     // First, clean up old timestamps from previous days
-    const stored = await chrome.storage.local.get(['clockInTimestamp', 'clockOutTimestamp', 'hasClockedOut', 'workSummary']);
+    let stored = await chrome.storage.local.get(['clockInTimestamp', 'clockOutTimestamp', 'hasClockedOut', 'workSummary']);
 
-    if (stored.clockInTimestamp && !isToday(stored.clockInTimestamp)) {
-      // Timestamp is from a previous day - clear it
+    if (stored.clockInTimestamp && !isCurrentWorkSession(stored.clockInTimestamp)) {
+      // Timestamp is too old (>24h) - clear it
       await clearClockInTime();
       await chrome.storage.local.remove(['workSummary', 'clockOutTimestamp', 'hasClockedOut']);
+      // ストレージクリア後にローカル変数を再取得（stale data防止）
+      stored = await chrome.storage.local.get(['clockInTimestamp', 'clockOutTimestamp', 'hasClockedOut', 'workSummary']);
+    } else if (stored.clockInTimestamp && !isToday(stored.clockInTimestamp) && stored.hasClockedOut) {
+      // Previous day's completed session - clear it
+      await clearClockInTime();
+      await chrome.storage.local.remove(['workSummary', 'clockOutTimestamp', 'hasClockedOut']);
+      // ストレージクリア後にローカル変数を再取得（stale data防止）
+      stored = await chrome.storage.local.get(['clockInTimestamp', 'clockOutTimestamp', 'hasClockedOut', 'workSummary']);
     }
 
-    // Check if we have valid cached data for today
-    const hasCachedClockIn = stored.clockInTimestamp && isToday(stored.clockInTimestamp);
+    // Check if we have valid cached data (today or overnight session)
+    const hasCachedClockIn = stored.clockInTimestamp && isCurrentWorkSession(stored.clockInTimestamp);
 
     if (hasCachedClockIn) {
       // Use cached data
@@ -663,9 +678,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     let todayWorkingMinutes = 0;
 
     // Add today's working time
-    // Fix: 条件を分離 - clockInTimestamp が今日なら todayWorkingMinutes を計算
-    // totalMinutes が null でも勤務日数の補正は必要なため、条件から除外
-    if (clockInTimestamp && isToday(clockInTimestamp)) {
+    // Fix: 条件を分離 - clockInTimestamp が有効なセッションなら todayWorkingMinutes を計算
+    // 深夜勤務対応: isCurrentWorkSession()で24時間以内を有効と判定
+    if (clockInTimestamp && isCurrentWorkSession(clockInTimestamp)) {
       if (isWorking) {
         // Currently working: add time from clock-in to now
         todayWorkingMinutes = Math.floor((Date.now() - clockInTimestamp) / 60000);
@@ -691,7 +706,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       // totalMinutes への加算は null でない場合のみ
       if (totalMinutes !== null && todayWorkingMinutes > 0) {
-        totalMinutes += todayWorkingMinutes;
+        // 休憩控除: 6時間以上勤務の場合は1時間控除して totalMinutes に加算
+        // todayWorkingMinutes 自体は変更しない（calculateOvertimeData内部で休憩控除するため）
+        let todayNetMinutes = todayWorkingMinutes;
+        if (todayNetMinutes >= 6 * 60) {
+          todayNetMinutes -= 60;
+        }
+        totalMinutes += todayNetMinutes;
       }
     }
 
@@ -735,8 +756,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     let remainingDays = !isNaN(remainingWorkdays) ? remainingWorkdays : (scheduledDays - actualDays);
 
     // 退勤打刻済み日数と日次残業合計を取得（残業/日の計算に使用）
-    const completedDays = parseInt(summary.completedDays, 10);
-    const totalDailyOvertimeMinutes = parseInt(summary.totalDailyOvertimeMinutes, 10);
+    // NaNチェック: parseIntが失敗した場合は0として扱う
+    const completedDaysRaw = parseInt(summary.completedDays, 10);
+    const completedDays = isNaN(completedDaysRaw) ? 0 : completedDaysRaw;
+    const totalDailyOvertimeRaw = parseInt(summary.totalDailyOvertimeMinutes, 10);
+    const totalDailyOvertimeMinutes = isNaN(totalDailyOvertimeRaw) ? 0 : totalDailyOvertimeRaw;
 
     if (!isNaN(remainingDays)) {
       remainingDaysEl.textContent = `${remainingDays}日`;
@@ -791,9 +815,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const data = calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes);
 
-    // 勤務日数（completedDays: 退勤打刻済み日数を使用）
-    const displayDays = (!isNaN(completedDays) && completedDays > 0) ? completedDays : 0;
-    actualDaysEl.textContent = `${displayDays}日`;
+    // 勤務日数（当日含むリアルタイム値を使用）
+    actualDaysEl.textContent = `${data.realTimeCompletedDays}日`;
 
     // 勤務時間
     actualHoursEl.textContent = formatMinutesToTime(totalMinutes);
@@ -855,6 +878,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       overtimeAlert.classList.add('hidden');
       overtimeBadge.classList.add('safe');
       overtimeBadge.textContent = data.badgeText;
+    }
+
+    // 休日出勤表示
+    const holidayWorkRow = document.getElementById('holidayWorkRow');
+    const holidayWorkInfoEl = document.getElementById('holidayWorkInfo');
+    if (holidayWorkRow && holidayWorkInfoEl) {
+      const hwDays = parseInt(summary.holidayWorkDays, 10);
+      const hwMinutes = parseInt(summary.holidayWorkMinutes, 10);
+      if (!isNaN(hwDays) && hwDays > 0) {
+        holidayWorkRow.style.display = 'flex';
+        holidayWorkInfoEl.textContent = `${hwDays}日 (${formatMinutesToTime(hwMinutes)})`;
+      } else {
+        holidayWorkRow.style.display = 'none';
+      }
     }
 
     // Show overtime section
