@@ -440,7 +440,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // actualDaysが0でも、今日の勤務時間があれば表示（月初めの対応）
     const effectiveActualDays = (actualDays === 0 && todayWorkingMinutes > 0) ? 1 : actualDays;
     if (!isNaN(scheduledDays) && !isNaN(effectiveActualDays) && (effectiveActualDays > 0 || todayWorkingMinutes > 0)) {
-      updateOvertimeSectionRealTime(realTimeTotalMinutes, scheduledDays, effectiveActualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes);
+      const isCrossDaySession = clockInTimestamp ? !isToday(clockInTimestamp) : false;
+      updateOvertimeSectionRealTime(realTimeTotalMinutes, scheduledDays, effectiveActualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession);
     }
 
     // 休日出勤表示のリアルタイム更新
@@ -461,8 +462,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Update overtime section in real-time (uses shared calculateOvertimeData)
-  function updateOvertimeSectionRealTime(totalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes) {
-    const data = calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes);
+  function updateOvertimeSectionRealTime(totalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession) {
+    const data = calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession);
 
     // 勤務日数（当日含むリアルタイム値を使用）
     actualDaysEl.textContent = `${data.realTimeCompletedDays}日`;
@@ -835,7 +836,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     summarySection.classList.remove('hidden');
 
     // Update overtime section
-    updateOvertimeSection(summary, totalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes);
+    const isCrossDaySession = clockInTimestamp ? !isToday(clockInTimestamp) : false;
+    updateOvertimeSection(summary, totalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession);
   }
 
   // Hide summary section
@@ -845,7 +847,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Update overtime section (uses shared calculateOvertimeData)
-  function updateOvertimeSection(summary, totalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes) {
+  function updateOvertimeSection(summary, totalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession) {
     // actualDaysが0でも、今日の勤務時間があれば表示する（月初めの対応）
     if (totalMinutes === null || ((!actualDays || actualDays === 0) && todayWorkingMinutes === 0)) {
       hideOvertimeSection();
@@ -856,7 +858,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       actualDays = 1;
     }
 
-    const data = calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes);
+    const data = calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession);
 
     // 勤務日数（当日含むリアルタイム値を使用）
     actualDaysEl.textContent = `${data.realTimeCompletedDays}日`;
