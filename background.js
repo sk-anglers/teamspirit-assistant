@@ -115,22 +115,43 @@ async function fetchAllAttendanceData() {
       console.log('[TS-Assistant] 日付変更を検出、キャッシュを無効化');
       allDataCache = null;
       allDataCacheTime = 0;
-      await chrome.storage.local.remove([
-        'attendanceData', 'clockInTimestamp',
-        'clockOutTimestamp', 'hasClockedOut', 'workSummary',
-        'lastPunchTime', 'lastPunchAction'
-      ]);
+      // 日跨ぎ勤務中かチェック: アクティブセッション（clockIn済み・未退勤・24時間以内）は保護
+      const activeSession = await chrome.storage.local.get(['clockInTimestamp', 'hasClockedOut']);
+      const isActiveSession = activeSession.clockInTimestamp && !activeSession.hasClockedOut
+        && (Date.now() - activeSession.clockInTimestamp) < CONFIG.TWENTY_FOUR_HOURS_MS;
+      if (isActiveSession) {
+        console.log('[TS-Assistant] 日跨ぎ勤務中のためセッション情報を保護');
+        await chrome.storage.local.remove([
+          'attendanceData', 'workSummary'
+        ]);
+      } else {
+        await chrome.storage.local.remove([
+          'attendanceData', 'clockInTimestamp',
+          'clockOutTimestamp', 'hasClockedOut', 'workSummary',
+          'lastPunchTime', 'lastPunchAction'
+        ]);
+      }
     }
   } else {
     // Service Worker再起動後: メモリキャッシュがないため storage の日付をチェック (#6)
-    const stored = await chrome.storage.local.get(['lastAccessDate']);
+    const stored = await chrome.storage.local.get(['lastAccessDate', 'clockInTimestamp', 'hasClockedOut']);
     if (stored.lastAccessDate && stored.lastAccessDate !== todayDateStr) {
-      console.log('[TS-Assistant] SW再起動後の日付変更を検出、storageクリア');
-      await chrome.storage.local.remove([
-        'attendanceData', 'clockInTimestamp',
-        'clockOutTimestamp', 'hasClockedOut', 'workSummary',
-        'lastPunchTime', 'lastPunchAction', 'lastAccessDate'
-      ]);
+      // 日跨ぎ勤務中かチェック: アクティブセッションは保護
+      const isActiveSession = stored.clockInTimestamp && !stored.hasClockedOut
+        && (Date.now() - stored.clockInTimestamp) < CONFIG.TWENTY_FOUR_HOURS_MS;
+      if (isActiveSession) {
+        console.log('[TS-Assistant] SW再起動後の日付変更を検出、日跨ぎ勤務中のためセッション情報を保護');
+        await chrome.storage.local.remove([
+          'attendanceData', 'workSummary', 'lastAccessDate'
+        ]);
+      } else {
+        console.log('[TS-Assistant] SW再起動後の日付変更を検出、storageクリア');
+        await chrome.storage.local.remove([
+          'attendanceData', 'clockInTimestamp',
+          'clockOutTimestamp', 'hasClockedOut', 'workSummary',
+          'lastPunchTime', 'lastPunchAction', 'lastAccessDate'
+        ]);
+      }
     }
   }
   // 最終アクセス日を記録
@@ -372,22 +393,22 @@ async function fetchAllAttendanceDataInternal() {
                 continue;
               }
 
-              // 実勤務時間 = 退勤 - 出勤 - 休憩（6時間以上の場合）
+              // 実勤務時間 = 退勤 - 出勤（休憩控除は平日のみ、下の分岐内で実施）
               let workingMinutes = clockOutMinutes - clockInMinutes;
               // 日跨ぎ対応: 退勤時刻が出勤時刻より小さい場合は翌日として扱う
               // 例: 22:00出勤→翌02:00退勤
               if (workingMinutes < 0) {
                 workingMinutes += 24 * 60; // 1440分を加算
               }
-              if (workingMinutes >= 6 * 60) {
-                workingMinutes -= BREAK_MINUTES;
-              }
-
-              // 休日出勤は別カウントに分離
+              // 休日出勤は別カウントに分離（休日は休憩控除なし＝全額残業）
               if (day.isHoliday) {
                 holidayWorkDays++;
                 holidayWorkMinutes += workingMinutes;
               } else {
+                // 平日のみ休憩控除
+                if (workingMinutes >= 6 * 60) {
+                  workingMinutes -= BREAK_MINUTES;
+                }
                 completedDays++;
                 // 日次残業 = max(0, 勤務時間 - 8時間)
                 // 8時間未満の日は0として扱う（マイナスにしない）
@@ -426,19 +447,56 @@ async function fetchAllAttendanceDataInternal() {
         const data = r.result;
 
         // 日跨ぎセッション検出: 今日の出勤データがないが、前日から継続勤務中の場合を補完
+        // 方式1: storage の clockInTimestamp から検出（拡張機能経由の打刻）
+        // 方式2: TeamSpirit月間データから「前日に出勤あり・退勤なし」を直接検出（フォールバック）
+        let crossDayDetected = false; // 日跨ぎ検出フラグ（後続のstorage更新で上書き防止に使用）
         if (data.todayData && !data.todayData.clockInTime) {
+          let detected = false;
+
+          // 方式1: storage の clockInTimestamp による検出
           const stored = await chrome.storage.local.get(['clockInTimestamp', 'hasClockedOut']);
           if (stored.clockInTimestamp && !stored.hasClockedOut) {
             const elapsed = Date.now() - stored.clockInTimestamp;
             if (elapsed > 0 && elapsed < CONFIG.TWENTY_FOUR_HOURS_MS) {
-              // clockInTimestamp から前日の日付文字列を生成
               const yesterdayDate = new Date(stored.clockInTimestamp);
               const yesterdayStr = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, '0')}-${String(yesterdayDate.getDate()).padStart(2, '0')}`;
               const yesterdayData = data.monthlyData[yesterdayStr];
               if (yesterdayData && yesterdayData.clockIn) {
-                console.log('[TS-Assistant] 日跨ぎセッション検出: 前日(' + yesterdayStr + ')の出勤を引き継ぎ');
+                console.log('[TS-Assistant] 日跨ぎセッション検出(方式1): 前日(' + yesterdayStr + ')の出勤を引き継ぎ');
                 data.todayData.clockInTime = yesterdayData.clockIn;
                 data.todayData.isWorking = true;
+                detected = true;
+                crossDayDetected = true;
+              }
+            }
+          }
+
+          // 方式2: 月間データから前日の「出勤あり・退勤なし」を検出（storageに依存しない）
+          if (!detected) {
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            const yesterdayStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+            const yesterdayData = data.monthlyData[yesterdayStr];
+            if (yesterdayData && yesterdayData.clockIn && !yesterdayData.clockOut) {
+              console.log('[TS-Assistant] 日跨ぎセッション検出(方式2): 前日(' + yesterdayStr + ')に出勤あり・退勤なし → 勤務継続中');
+              data.todayData.clockInTime = yesterdayData.clockIn;
+              data.todayData.isWorking = true;
+              detected = true;
+              crossDayDetected = true;
+              // clockInTimestamp を前日の出勤時刻から構築（明示的に昨日の日付を使用）
+              // parseTimeToTimestamp は日跨ぎ時に今日の日付を返す可能性があるため使わない
+              const timeParts = yesterdayData.clockIn.split(':');
+              const clockInHours = parseInt(timeParts[0], 10);
+              const clockInMinutes = parseInt(timeParts[1], 10);
+              if (!isNaN(clockInHours) && !isNaN(clockInMinutes)) {
+                const clockInDate = new Date(yesterday);
+                clockInDate.setHours(clockInHours, clockInMinutes, 0, 0);
+                const clockInTs = clockInDate.getTime();
+                await chrome.storage.local.set({
+                  clockInTimestamp: clockInTs,
+                  hasClockedOut: false
+                });
+                console.log('[TS-Assistant] clockInTimestamp を前日出勤時刻から復元:', clockInTs);
               }
             }
           }
@@ -494,8 +552,12 @@ async function fetchAllAttendanceDataInternal() {
 
         // hasClockedOut: 出勤打刻後はAPIの退勤時刻が打刻後の新しいものの場合のみ反映
         // (#3) 必ず明示的に true/false を設定し、undefined を防止
+        // 日跨ぎ検出済みの場合: 日跨ぎ検出で正しく設定した値を保護する
         const apiHasClockedOut = !!data.todayData?.clockOutTime;
-        if (lastActionIsClockIn) {
+        if (crossDayDetected) {
+          // 日跨ぎ検出済み: clockInTimestamp と hasClockedOut は既に正しく設定済み、上書きしない
+          storageUpdate.hasClockedOut = false;
+        } else if (lastActionIsClockIn) {
           if (apiHasClockedOut && clockOutTimestamp && clockOutTimestamp > existing.lastPunchTime) {
             storageUpdate.hasClockedOut = true;
             storageUpdate.clockOutTimestamp = clockOutTimestamp;
@@ -511,7 +573,9 @@ async function fetchAllAttendanceDataInternal() {
         }
 
         // clockInTimestamp: 出勤打刻後はpunch.jsの精度の高いタイムスタンプを保護
-        if (lastActionIsClockIn) {
+        if (crossDayDetected) {
+          // 日跨ぎ検出済み: 正しい前日タイムスタンプを保護、parseTimeToTimestamp の誤った値で上書きしない
+        } else if (lastActionIsClockIn) {
           // punch.js が設定した Date.now() 精度のタイムスタンプを保護
         } else if (!recentPunch && clockInTimestamp) {
           storageUpdate.clockInTimestamp = clockInTimestamp;
@@ -579,6 +643,28 @@ async function detectMissedPunches() {
       return { success: false, error: 'データ取得失敗' };
     }
 
+    // 日跨ぎ勤務中かチェック: アクティブセッションの出勤日を特定
+    // 方式1: storage の clockInTimestamp から
+    const activeSessionData = await chrome.storage.local.get(['clockInTimestamp', 'hasClockedOut']);
+    let activePunchDate = null;
+    if (activeSessionData.clockInTimestamp && !activeSessionData.hasClockedOut) {
+      const elapsed = Date.now() - activeSessionData.clockInTimestamp;
+      if (elapsed > 0 && elapsed < CONFIG.TWENTY_FOUR_HOURS_MS) {
+        const punchDate = new Date(activeSessionData.clockInTimestamp);
+        activePunchDate = `${punchDate.getFullYear()}-${String(punchDate.getMonth() + 1).padStart(2, '0')}-${String(punchDate.getDate()).padStart(2, '0')}`;
+      }
+    }
+    // 方式2: 前日の月間データから（出勤あり・退勤なし → 勤務継続中）
+    if (!activePunchDate) {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+      const yesterdayData = monthlyData[yesterdayStr];
+      if (yesterdayData && yesterdayData.clockIn && !yesterdayData.clockOut) {
+        activePunchDate = yesterdayStr;
+      }
+    }
+
     const missedPunches = [];
     const todayStr = getTodayDateStr();
 
@@ -623,7 +709,12 @@ async function detectMissedPunches() {
       }
 
       // 退勤漏れ判定（出勤あり、退勤なし）
+      // 日跨ぎ勤務中の出勤日は除外（まだ勤務継続中のため漏れではない）
       if (hasClockIn && !hasClockOut) {
+        if (activePunchDate && dateStr === activePunchDate) {
+          console.log('[TS-Assistant] 日跨ぎ勤務中の出勤日をスキップ:', dateStr);
+          continue;
+        }
         missedPunches.push({
           date: dateStr,
           dayOfWeek: getDayOfWeekStr(dateStr),
