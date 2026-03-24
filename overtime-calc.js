@@ -110,14 +110,16 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
   // 月末予測 = 8h超過積み上げベース
   // 確定分（平日8h超過累計 + 休日出勤実績）+ 当日寄与 + 将来予測
   // 当日寄与: max(todayExcess, forecastRate) で出勤直後の予測低下を防止
+  //          最終日(remainingDays=0)は実績値をそのまま使い実測値に収束させる
   // 日跨ぎ補正: 前日が未確定のため remainingDays+1 で補正
   const forecastRate = baseCompletedDays > 0
     ? baseDailyOvertimeMinutes / baseCompletedDays : 0;
   const todayContribution = todayWorkingMinutes > 0
-    ? Math.max(todayExcess, forecastRate) : 0;
+    ? (remainingDays === 0 ? todayExcess : Math.max(todayExcess, forecastRate))
+    : 0;
   const futureRemainingDays = todayWorkingMinutes > 0
     ? (isCrossDaySession ? remainingDays + 1 : remainingDays)
-    : remainingDays + 1;
+    : (remainingDays > 0 ? remainingDays + 1 : 0);
   const forecastOvertime = Math.round(baseDailyOvertimeMinutes + holidayWorkMinutes
     + todayContribution + (forecastRate * futureRemainingDays));
 
