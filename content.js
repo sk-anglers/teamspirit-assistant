@@ -25,6 +25,7 @@
   let infoPanel = null;
   let retryCount = 0;
   let cachedData = null;
+  let cachedClockInTimestamp = null; // storageの実タイムスタンプ（日跨ぎでも正確）
   let updateIntervalId = null;
   let todayIsHoliday = false;
 
@@ -444,8 +445,9 @@
       targetRow.style.display = 'flex';
       clockInEl.textContent = data.clockInTime;
 
-      // 日跨ぎ補正: 統一関数 parseTimeToTimestamp を使用（#5）
-      const clockInTs = parseTimeToTimestamp(data.clockInTime);
+      // 勤務時間計算: cachedClockInTimestamp（実タイムスタンプ）を優先使用
+      // parseTimeToTimestamp は日跨ぎ時に誤った日付を返す可能性があるため
+      const clockInTs = cachedClockInTimestamp || parseTimeToTimestamp(data.clockInTime);
       if (clockInTs) {
         const workingMs = Date.now() - clockInTs;
         // 異常値チェック: マイナスまたは24時間超過は表示しない
@@ -464,8 +466,8 @@
       clockInEl.textContent = data.clockInTime;
       clockOutEl.textContent = data.clockOutTime;
 
-      // 統一関数 parseTimeToTimestamp を使用（#5 日跨ぎ補正ロジック統一）
-      let clockInTs = parseTimeToTimestamp(data.clockInTime);
+      // cachedClockInTimestamp を優先使用（日跨ぎ時の精度向上）
+      let clockInTs = cachedClockInTimestamp || parseTimeToTimestamp(data.clockInTime);
       let clockOutTs = parseTimeToTimestamp(data.clockOutTime);
       if (clockInTs && clockOutTs) {
         // 26時方式: 退勤が出勤より前なら翌日として扱う（夜勤の日跨ぎ対応）
@@ -505,8 +507,9 @@
       // 出勤中のみ本日分を加算（退勤済みは既にtotalHoursに含まれるため加算不要）
       if (data.clockInTime && totalMinutes !== null) {
         if (data.isWorking) {
-          // 出勤中: 出勤時刻〜現在のリアルタイム計算（統一関数使用 #5）
-          const clockInTs2 = parseTimeToTimestamp(data.clockInTime);
+          // 出勤中: 出勤時刻〜現在のリアルタイム計算
+          // cachedClockInTimestamp を優先使用（日跨ぎ時の精度向上）
+          const clockInTs2 = cachedClockInTimestamp || parseTimeToTimestamp(data.clockInTime);
           if (clockInTs2) {
             todayWorkingMinutes = Math.floor((Date.now() - clockInTs2) / 60000);
             if (todayWorkingMinutes >= CONFIG.MAX_WORKING_MINUTES_PER_DAY) {
@@ -525,8 +528,8 @@
         } else if (data.clockOutTime) {
           // 退勤済み: TeamSpiritのtotalHoursに当日分が含まれるため、currentTotalMinutesへの加算は不要
           // todayWorkingMinutesはovertime計算用に算出するが、表示用totalには足さない
-          // 統一関数 parseTimeToTimestamp を使用（#5 日跨ぎ補正ロジック統一）
-          let clockInTs2 = parseTimeToTimestamp(data.clockInTime);
+          // cachedClockInTimestamp を優先使用（日跨ぎ時の精度向上）
+          let clockInTs2 = cachedClockInTimestamp || parseTimeToTimestamp(data.clockInTime);
           let clockOutTs2 = parseTimeToTimestamp(data.clockOutTime);
           if (clockInTs2 && clockOutTs2) {
             // 26時方式: 退勤が出勤より前なら翌日として扱う
@@ -592,7 +595,7 @@
             infoPanel.querySelector('#ts-required-per-day').textContent = formatMinutesToTime(requiredMinutesPerDay);
 
             if (data.isWorking && data.clockInTime) {
-              const clockInTs3 = parseTimeToTimestamp(data.clockInTime);
+              const clockInTs3 = cachedClockInTimestamp || parseTimeToTimestamp(data.clockInTime);
               if (clockInTs3) {
                 const targetMs = clockInTs3 + (requiredMinutesPerDay + CONFIG.BREAK_MINUTES) * 60 * 1000;
                 targetTimeEl.textContent = formatTimeShort(new Date(targetMs));
@@ -607,7 +610,10 @@
       }
 
       // 残業警告セクション更新
-      updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes);
+      const isCrossDaySession = cachedClockInTimestamp
+        ? new Date(cachedClockInTimestamp).toDateString() !== new Date().toDateString()
+        : false;
+      updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession);
     } else {
       summarySection.style.display = 'none';
       // サマリーがない場合は残業セクションも非表示
@@ -617,7 +623,7 @@
   }
 
   // 残業警告セクションの更新 (uses shared calculateOvertimeData)
-  function updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes) {
+  function updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession) {
     if (!infoPanel) return;
 
     const overtimeSection = infoPanel.querySelector('#ts-overtime-section');
@@ -635,7 +641,7 @@
 
     overtimeSection.style.display = 'block';
 
-    const data = calculateOvertimeData(currentTotalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes);
+    const data = calculateOvertimeData(currentTotalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession);
 
     // 各要素を取得
     const actualDaysEl = infoPanel.querySelector('#ts-actual-days');
@@ -722,9 +728,11 @@
       if (chrome.runtime?.id) {
         chrome.storage.local.get(['clockInTimestamp', 'hasClockedOut'], (stored) => {
           if (chrome.runtime.lastError) return;
+          // clockInTimestamp をキャッシュ（updateDisplay で正確な勤務時間計算に使用）
           if (stored.clockInTimestamp && !stored.hasClockedOut) {
             const elapsed = Date.now() - stored.clockInTimestamp;
             if (elapsed > 0 && elapsed < CONFIG.TWENTY_FOUR_HOURS_MS) {
+              cachedClockInTimestamp = stored.clockInTimestamp;
               if (cachedData && !cachedData.clockInTime) {
                 const clockInDate = new Date(stored.clockInTimestamp);
                 cachedData.isWorking = true;
@@ -733,6 +741,9 @@
                 console.log('[TS-Assistant] 日跨ぎセッション検出: cachedData補正', cachedData.clockInTime);
               }
             }
+          } else if (stored.clockInTimestamp && stored.hasClockedOut !== true) {
+            // hasClockedOut が undefined の場合も clockInTimestamp をキャッシュ
+            cachedClockInTimestamp = stored.clockInTimestamp;
           }
           updateDisplay();
         });
@@ -983,6 +994,7 @@
           chrome.storage.local.get(['clockInTimestamp'], (result) => {
             if (chrome.runtime.lastError) return;
             if (cachedData && result.clockInTimestamp) {
+              cachedClockInTimestamp = result.clockInTimestamp;
               cachedData.isWorking = true;
               const clockInDate = new Date(result.clockInTimestamp);
               cachedData.clockInTime = `${String(clockInDate.getHours()).padStart(2, '0')}:${String(clockInDate.getMinutes()).padStart(2, '0')}`;
