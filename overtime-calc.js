@@ -118,8 +118,8 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
   const futureRemainingDays = todayWorkingMinutes > 0
     ? (isCrossDaySession ? remainingDays + 1 : remainingDays)
     : remainingDays + 1;
-  const forecastOvertime = baseDailyOvertimeMinutes + holidayWorkMinutes
-    + todayContribution + (forecastRate * futureRemainingDays);
+  const forecastOvertime = Math.round(baseDailyOvertimeMinutes + holidayWorkMinutes
+    + todayContribution + (forecastRate * futureRemainingDays));
 
   // 月末予測の警告レベル
   let forecastLevel;
