@@ -441,7 +441,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const effectiveActualDays = (actualDays === 0 && todayWorkingMinutes > 0) ? 1 : actualDays;
     if (!isNaN(scheduledDays) && !isNaN(effectiveActualDays) && (effectiveActualDays > 0 || todayWorkingMinutes > 0)) {
       const isCrossDaySession = clockInTimestamp ? !isToday(clockInTimestamp) : false;
-      updateOvertimeSectionRealTime(realTimeTotalMinutes, scheduledDays, effectiveActualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession);
+      updateOvertimeSectionRealTime(realTimeTotalMinutes, scheduledDays, effectiveActualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession, false);
     }
 
     // 休日出勤表示のリアルタイム更新
@@ -462,8 +462,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Update overtime section in real-time (uses shared calculateOvertimeData)
-  function updateOvertimeSectionRealTime(totalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession) {
-    const data = calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession);
+  function updateOvertimeSectionRealTime(totalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession, hasClockedOut) {
+    const data = calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession, hasClockedOut);
 
     // 勤務日数（当日含むリアルタイム値を使用）
     actualDaysEl.textContent = `${data.realTimeCompletedDays}日`;
@@ -837,7 +837,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Update overtime section
     const isCrossDaySession = clockInTimestamp ? !isToday(clockInTimestamp) : false;
-    updateOvertimeSection(summary, totalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession);
+    updateOvertimeSection(summary, totalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession, !isWorking);
   }
 
   // Hide summary section
@@ -847,7 +847,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Update overtime section (uses shared calculateOvertimeData)
-  function updateOvertimeSection(summary, totalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession) {
+  function updateOvertimeSection(summary, totalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession, hasClockedOut) {
     // actualDaysが0でも、今日の勤務時間があれば表示する（月初めの対応）
     if (totalMinutes === null || ((!actualDays || actualDays === 0) && todayWorkingMinutes === 0)) {
       hideOvertimeSection();
@@ -858,7 +858,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       actualDays = 1;
     }
 
-    const data = calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession);
+    const data = calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession, hasClockedOut);
 
     // 勤務日数（当日含むリアルタイム値を使用）
     actualDaysEl.textContent = `${data.realTimeCompletedDays}日`;

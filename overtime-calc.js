@@ -7,7 +7,7 @@
 // completedDays: 退勤打刻済み日数（当日除く）
 // totalDailyOvertimeMinutes: 日次残業の合計（各日の(勤務時間-8時間)を合算、当日除く）
 // holidayWorkMinutes: 休日出勤時間（分）。法的残業・過不足から除外するために使用
-function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession) {
+function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession, hasClockedOut) {
   const STANDARD_HOURS_PER_DAY = CONFIG.STANDARD_HOURS_PER_DAY;
   const OVERTIME_LIMIT = CONFIG.OVERTIME_LIMIT;
   const BREAK_MINUTES = CONFIG.BREAK_MINUTES;
@@ -22,6 +22,7 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
   totalDailyOvertimeMinutes = (isNaN(totalDailyOvertimeMinutes) || totalDailyOvertimeMinutes === null) ? 0 : totalDailyOvertimeMinutes;
   holidayWorkMinutes = (isNaN(holidayWorkMinutes) || holidayWorkMinutes === null) ? 0 : holidayWorkMinutes;
   isCrossDaySession = !!isCrossDaySession;
+  hasClockedOut = !!hasClockedOut;
 
   // 休日出勤を除外した平日勤務時間（法的計算用）
   const workdayTotalMinutes = totalMinutes - holidayWorkMinutes;
@@ -115,7 +116,9 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
   const forecastRate = baseCompletedDays > 0
     ? baseDailyOvertimeMinutes / baseCompletedDays : 0;
   const todayContribution = todayWorkingMinutes > 0
-    ? (remainingDays === 0 ? todayExcess : Math.max(todayExcess, forecastRate))
+    ? (remainingDays === 0 || hasClockedOut
+        ? todayExcess                          // 最終日 or 退勤済み → 実績値で収束
+        : Math.max(todayExcess, forecastRate))  // 出勤中 → 予測安定化
     : 0;
   const futureRemainingDays = todayWorkingMinutes > 0
     ? (isCrossDaySession ? remainingDays + 1 : remainingDays)

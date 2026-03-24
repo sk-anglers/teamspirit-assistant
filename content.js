@@ -613,7 +613,8 @@
       const isCrossDaySession = cachedClockInTimestamp
         ? new Date(cachedClockInTimestamp).toDateString() !== new Date().toDateString()
         : false;
-      updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession);
+      const hasClockedOut = data && !data.isWorking && data.clockOutTime;
+      updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession, !!hasClockedOut);
     } else {
       summarySection.style.display = 'none';
       // サマリーがない場合は残業セクションも非表示
@@ -623,7 +624,7 @@
   }
 
   // 残業警告セクションの更新 (uses shared calculateOvertimeData)
-  function updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession) {
+  function updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession, hasClockedOut) {
     if (!infoPanel) return;
 
     const overtimeSection = infoPanel.querySelector('#ts-overtime-section');
@@ -641,7 +642,7 @@
 
     overtimeSection.style.display = 'block';
 
-    const data = calculateOvertimeData(currentTotalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession);
+    const data = calculateOvertimeData(currentTotalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession, hasClockedOut);
 
     // 各要素を取得
     const actualDaysEl = infoPanel.querySelector('#ts-actual-days');
