@@ -742,8 +742,11 @@
               }
             }
           } else if (stored.clockInTimestamp && stored.hasClockedOut !== true) {
-            // hasClockedOut が undefined の場合も clockInTimestamp をキャッシュ
-            cachedClockInTimestamp = stored.clockInTimestamp;
+            // hasClockedOut が undefined の場合も clockInTimestamp をキャッシュ（24h以内のみ）
+            const elapsed = Date.now() - stored.clockInTimestamp;
+            if (elapsed > 0 && elapsed < CONFIG.TWENTY_FOUR_HOURS_MS) {
+              cachedClockInTimestamp = stored.clockInTimestamp;
+            }
           }
           updateDisplay();
         });
