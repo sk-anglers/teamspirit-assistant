@@ -7,7 +7,7 @@
 // completedDays: 退勤打刻済み日数（当日除く）
 // totalDailyOvertimeMinutes: 日次残業の合計（各日の(勤務時間-8時間)を合算、当日除く）
 // holidayWorkMinutes: 休日出勤時間（分）。法的残業・過不足から除外するために使用
-function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes) {
+function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes, holidayWorkMinutes, isCrossDaySession) {
   const STANDARD_HOURS_PER_DAY = CONFIG.STANDARD_HOURS_PER_DAY;
   const OVERTIME_LIMIT = CONFIG.OVERTIME_LIMIT;
   const BREAK_MINUTES = CONFIG.BREAK_MINUTES;
@@ -21,6 +21,7 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
   completedDays = (isNaN(completedDays) || completedDays === null) ? 0 : completedDays;
   totalDailyOvertimeMinutes = (isNaN(totalDailyOvertimeMinutes) || totalDailyOvertimeMinutes === null) ? 0 : totalDailyOvertimeMinutes;
   holidayWorkMinutes = (isNaN(holidayWorkMinutes) || holidayWorkMinutes === null) ? 0 : holidayWorkMinutes;
+  isCrossDaySession = !!isCrossDaySession;
 
   // 休日出勤を除外した平日勤務時間（法的計算用）
   const workdayTotalMinutes = totalMinutes - holidayWorkMinutes;
@@ -106,12 +107,19 @@ function calculateOvertimeData(totalMinutes, actualDays, scheduledMinutes, today
     dailyExcessLevel = 'normal';
   }
 
-  // 月末予測 = max(0, 平均勤務時間/日 × 全勤務日数 − 所定労働時間)
-  // 「このペースだと月末の月間残業はこうなる」を表示
-  // 短い日が長い日を相殺するフルフレックスの実態に即した予測
-  const totalExpectedDays = realTimeCompletedDays + Math.max(0, remainingDays || 0);
-  const avgTotalPerDay = Math.round(totalMinutes / safeCompletedDays);
-  const forecastOvertime = Math.max(0, avgTotalPerDay * totalExpectedDays - scheduledMinutes);
+  // 月末予測 = 8h超過積み上げベース
+  // 確定分（平日8h超過累計 + 休日出勤実績）+ 当日寄与 + 将来予測
+  // 当日寄与: max(todayExcess, forecastRate) で出勤直後の予測低下を防止
+  // 日跨ぎ補正: 前日が未確定のため remainingDays+1 で補正
+  const forecastRate = baseCompletedDays > 0
+    ? baseDailyOvertimeMinutes / baseCompletedDays : 0;
+  const todayContribution = todayWorkingMinutes > 0
+    ? Math.max(todayExcess, forecastRate) : 0;
+  const futureRemainingDays = todayWorkingMinutes > 0
+    ? (isCrossDaySession ? remainingDays + 1 : remainingDays)
+    : remainingDays + 1;
+  const forecastOvertime = baseDailyOvertimeMinutes + holidayWorkMinutes
+    + todayContribution + (forecastRate * futureRemainingDays);
 
   // 月末予測の警告レベル
   let forecastLevel;
